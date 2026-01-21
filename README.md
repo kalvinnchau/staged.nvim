@@ -1,13 +1,13 @@
 # staged.nvim
 
-ephemeral comments for [codediff.nvim](https://github.com/codediff/codediff.nvim) diffs.
+ephemeral comments for [codediff.nvim](https://github.com/esmuellert/codediff.nvim) diffs.
 
 comments live on the modified side, track line positions, and disappear when the tab closes.
 
 ## requirements
 
 - neovim >= 0.10.0
-- [codediff.nvim](https://github.com/codediff/codediff.nvim)
+- [codediff.nvim](https://github.com/esmuellert/codediff.nvim)
 
 ## install
 
@@ -15,7 +15,7 @@ comments live on the modified side, track line positions, and disappear when the
 -- lazy.nvim
 {
   'kalvinnchau/staged.nvim',
-  dependencies = { 'codediff/codediff.nvim' },
+  dependencies = { 'esmuellert/codediff.nvim' },
   opts = {},
 }
 ```
@@ -26,7 +26,7 @@ comments live on the modified side, track line positions, and disappear when the
 -- lazy.nvim
 {
   'kalvinnchau/staged.nvim',
-  dependencies = { 'codediff/codediff.nvim' },
+  dependencies = { 'esmuellert/codediff.nvim' },
   opts = {
     activation = {
       mode = 'auto', -- 'auto' or 'manual' session creation
