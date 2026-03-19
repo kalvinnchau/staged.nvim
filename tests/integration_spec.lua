@@ -53,6 +53,27 @@ describe('integration', function()
       local signs = helpers.get_signs(test_buf, 'staged')
       assert.equals(2, #signs)
     end)
+
+    it('should clamp indicators when the file buffer changes', function()
+      helpers.add_comment(10, 10, 'Trailing comment')
+
+      local shorter_buf = helpers.create_test_buffer({
+        'line 1',
+        'line 2',
+      })
+
+      state.set_current_file(session, '/test/example.lua', shorter_buf)
+
+      assert.has_no.errors(function()
+        inline.render(session)
+      end)
+
+      local signs = helpers.get_signs(shorter_buf, 'staged')
+      assert.equals(1, #signs)
+      assert.equals(2, signs[1].lnum)
+
+      vim.api.nvim_buf_delete(shorter_buf, { force = true })
+    end)
   end)
 
   describe('sidebar', function()
@@ -210,6 +231,28 @@ describe('integration', function()
 
       local cursor = vim.api.nvim_win_get_cursor(0)
       assert.equals(3, cursor[1])
+    end)
+
+    it('should clamp navigation when the file buffer changes', function()
+      helpers.add_comment(10, 10, 'Trailing comment')
+
+      local shorter_buf = helpers.create_test_buffer({
+        'line 1',
+        'line 2',
+      })
+
+      state.set_current_file(session, '/test/example.lua', shorter_buf)
+      vim.api.nvim_set_current_buf(shorter_buf)
+      vim.api.nvim_win_set_cursor(0, { 1, 0 })
+
+      assert.has_no.errors(function()
+        require('staged').goto_next_comment()
+      end)
+
+      local cursor = vim.api.nvim_win_get_cursor(0)
+      assert.equals(2, cursor[1])
+
+      vim.api.nvim_buf_delete(shorter_buf, { force = true })
     end)
 
     it('should jump to previous comment', function()

@@ -1,5 +1,28 @@
 local M = {}
 
+---@param file_state StagedFileState
+---@param start_line integer
+---@param end_line integer
+---@return integer, integer
+local function clamp_lines(file_state, start_line, end_line)
+  if not vim.api.nvim_buf_is_valid(file_state.bufnr) then
+    return start_line, end_line
+  end
+
+  if not vim.api.nvim_buf_is_loaded(file_state.bufnr) then
+    return start_line, end_line
+  end
+
+  local line_count = vim.api.nvim_buf_line_count(file_state.bufnr)
+  if line_count < 1 then
+    return start_line, end_line
+  end
+
+  local clamped_start = math.max(1, math.min(start_line, line_count))
+  local clamped_end = math.max(clamped_start, math.min(end_line, line_count))
+  return clamped_start, clamped_end
+end
+
 ---Create an extmark to track comment position
 ---@param session StagedSession
 ---@param file_state StagedFileState
@@ -44,26 +67,29 @@ end
 ---@param comment StagedComment
 ---@return integer start_line, integer end_line (1-indexed)
 function M.get_current_lines(session, file_state, comment)
-  if not comment.extmark_id then
-    return comment.start_line, comment.end_line
-  end
+  local start_line = comment.start_line
+  local end_line = comment.end_line
 
-  local mark = vim.api.nvim_buf_get_extmark_by_id(
-    file_state.bufnr,
-    session.ns_id,
-    comment.extmark_id,
-    { details = true }
-  )
-
-  if mark and #mark > 0 then
-    local start_line = mark[1] + 1 -- Convert to 1-indexed
-    local details = mark[3]
-    local end_line = details and details.end_row and (details.end_row + 1) or start_line
+  if not vim.api.nvim_buf_is_valid(file_state.bufnr) then
     return start_line, end_line
   end
 
-  -- Fallback to original position
-  return comment.start_line, comment.end_line
+  if not comment.extmark_id then
+    return clamp_lines(file_state, start_line, end_line)
+  end
+
+  local ok, mark =
+    pcall(vim.api.nvim_buf_get_extmark_by_id, file_state.bufnr, session.ns_id, comment.extmark_id, {
+      details = true,
+    })
+
+  if ok and mark and #mark > 0 then
+    start_line = mark[1] + 1 -- Convert to 1-indexed
+    local details = mark[3]
+    end_line = details and details.end_row and (details.end_row + 1) or start_line
+  end
+
+  return clamp_lines(file_state, start_line, end_line)
 end
 
 return M

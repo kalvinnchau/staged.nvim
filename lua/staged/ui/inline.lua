@@ -5,13 +5,47 @@ local config = require('staged.config')
 local position = require('staged.core.position')
 local highlights = require('staged.ui.highlights')
 
+---@param bufnr integer
+---@return integer|nil
+local function get_line_count(bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return nil
+  end
+
+  if not vim.api.nvim_buf_is_loaded(bufnr) then
+    return nil
+  end
+
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  if line_count < 1 then
+    return nil
+  end
+
+  return line_count
+end
+
+---@param file_state StagedFileState
+---@param start_line integer
+---@param end_line integer
+---@return integer|nil, integer|nil
+local function get_render_range(file_state, start_line, end_line)
+  local line_count = get_line_count(file_state.bufnr)
+  if not line_count then
+    return nil, nil
+  end
+
+  local clamped_start = math.max(1, math.min(start_line, line_count))
+  local clamped_end = math.max(clamped_start, math.min(end_line, line_count))
+  return clamped_start, clamped_end
+end
+
 ---Render indicators for current file's comments
 ---@param session StagedSession
 function M.render(session)
   M.clear(session)
 
   local file_state = state.get_current_file_state(session)
-  if not file_state then
+  if not file_state or not get_line_count(file_state.bufnr) then
     return
   end
 
@@ -19,13 +53,16 @@ function M.render(session)
 
   for _, comment in pairs(file_state.comments) do
     local start_line, end_line = position.get_current_lines(session, file_state, comment)
+    start_line, end_line = get_render_range(file_state, start_line, end_line)
 
-    if style == 'sign' then
-      M.render_sign(file_state, start_line)
-    elseif style == 'virtual_text' then
-      M.render_virtual_text(file_state, start_line, comment)
-    elseif style == 'line_highlight' then
-      M.render_line_highlight(file_state, start_line, end_line)
+    if start_line then
+      if style == 'sign' then
+        M.render_sign(file_state, start_line)
+      elseif style == 'virtual_text' then
+        M.render_virtual_text(file_state, start_line, comment)
+      elseif style == 'line_highlight' then
+        M.render_line_highlight(file_state, start_line, end_line)
+      end
     end
   end
 end
