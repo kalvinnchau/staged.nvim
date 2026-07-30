@@ -8,6 +8,7 @@ comments live on the modified side, track line positions, and disappear when the
 
 - neovim >= 0.10.0
 - [codediff.nvim](https://github.com/esmuellert/codediff.nvim)
+- optionally, a clipboard provider for clipboard exports (`:checkhealth provider`)
 
 ## install
 
@@ -47,14 +48,20 @@ comments live on the modified side, track line positions, and disappear when the
     sidebar = {
       position = 'left', -- 'left' or 'right'
       width = 40,        -- sidebar width
+      height = 15,       -- height when placed below codediff's explorer
       auto_show = true,  -- show on first comment
     },
     inline = {
-      style = 'sign',  -- 'sign', 'virtual_text', 'line_highlight'
-      sign_icon = '>>', -- sign column icon
+      style = 'sign',                         -- 'sign', 'virtual_text', 'line_highlight'
+      sign_icon = '>>',                       -- sign column icon
+      virtual_text_format = '[%d comment(s)]', -- string.format pattern
+    },
+    input = {
+      style = 'floating', -- 'floating' or vim.ui.input-backed 'inline'
     },
     export = {
       include_code = true, -- include code snippets in export
+      format = 'markdown',  -- 'markdown' or 'plain'
     },
   },
 }
@@ -81,7 +88,7 @@ in sidebar:
 - `d` - delete comment
 - `q` - close sidebar
 
-in input window:
+in the floating input window:
 
 - `<C-s>` - save comment
 - `<CR>` - save (normal mode)
@@ -100,7 +107,7 @@ in input window:
 
 ## export
 
-outputs markdown with optional code snippets:
+outputs markdown or plain text with optional code snippets:
 
 ```markdown
 ## path/to/file.lua
@@ -110,10 +117,12 @@ outputs markdown with optional code snippets:
 
 ## development
 
-requires [mise](https://mise.jdx.dev/) for tool management:
+requires neovim, [plenary.nvim](https://github.com/nvim-lua/plenary.nvim), and
+[mise](https://mise.jdx.dev/) for tool management. the test config expects plenary.nvim at
+`stdpath('data')/lazy/plenary.nvim`.
 
 ```bash
-mise install          # install just, stylua
+mise install          # install neovim, just, stylua
 just fmt              # format code
 just test             # run tests
 just lint             # check formatting

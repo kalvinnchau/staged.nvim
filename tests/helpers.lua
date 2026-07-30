@@ -70,11 +70,10 @@ end
 
 ---Get signs for a buffer (compatibility wrapper)
 ---@param buf integer
----@param group string|integer namespace name or id
+---@param session StagedSession
 ---@return table[]
-function M.get_signs(buf, group)
-  local highlights = require('staged.ui.highlights')
-  return M.get_sign_extmarks(buf, highlights.ns_indicators)
+function M.get_signs(buf, session)
+  return M.get_sign_extmarks(buf, session.indicator_ns_id)
 end
 
 ---Simulate adding a comment via the API

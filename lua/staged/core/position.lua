@@ -29,8 +29,10 @@ end
 ---@param comment StagedComment
 ---@return integer|nil extmark_id
 function M.create_mark(session, file_state, comment)
-  -- Validate buffer and line range
-  if not vim.api.nvim_buf_is_valid(file_state.bufnr) then
+  if
+    not vim.api.nvim_buf_is_valid(file_state.bufnr)
+    or not vim.api.nvim_buf_is_loaded(file_state.bufnr)
+  then
     return nil
   end
 
@@ -40,13 +42,15 @@ function M.create_mark(session, file_state, comment)
   start_row = math.max(0, start_row)
   end_row = math.max(start_row, end_row)
 
+  local end_line = vim.api.nvim_buf_get_lines(file_state.bufnr, end_row, end_row + 1, false)[1]
+    or ''
+
   -- Extmarks are 0-indexed, comments are 1-indexed
   local extmark_id = vim.api.nvim_buf_set_extmark(file_state.bufnr, session.ns_id, start_row, 0, {
     end_row = end_row,
-    end_col = 0,
-    -- right_gravity = false means mark stays at original position
-    -- when text is inserted at the mark position
-    right_gravity = false,
+    end_col = #end_line,
+    right_gravity = true,
+    end_right_gravity = false,
   })
   return extmark_id
 end

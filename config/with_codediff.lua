@@ -10,14 +10,7 @@ vim.g.mapleader = ','
 -- Add plugin to runtimepath
 local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h:h')
 vim.opt.rtp:prepend(plugin_dir)
-
--- Add nui.nvim (codediff dependency)
-local nui_dir = vim.fn.stdpath('data') .. '/lazy/nui.nvim'
-if vim.fn.isdirectory(nui_dir) == 1 then
-  vim.opt.rtp:prepend(nui_dir)
-else
-  vim.notify('nui.nvim not found at: ' .. nui_dir, vim.log.levels.WARN)
-end
+vim.cmd('runtime plugin/staged.lua')
 
 -- Add codediff.nvim (assumes installed via lazy.nvim)
 local codediff_dir = vim.fn.stdpath('data') .. '/lazy/codediff.nvim'

@@ -14,6 +14,10 @@
 ---@field bufnr integer Buffer number for this file
 ---@field comments table<string, StagedComment> Comments keyed by their UUID
 
+---@class StagedKeymap
+---@field mode string
+---@field lhs string
+
 ---@class StagedSession
 ---@field tabpage integer Neovim tabpage ID (from codediff)
 ---@field files table<string, StagedFileState> File states keyed by absolute path
@@ -21,7 +25,9 @@
 ---@field sidebar_bufnr integer|nil Sidebar buffer (nil if not created)
 ---@field sidebar_winid integer|nil Sidebar window (nil if not visible)
 ---@field visible boolean Whether sidebar is currently visible
----@field ns_id integer Extmark namespace ID for this session
+---@field ns_id integer Position extmark namespace ID for this session
+---@field indicator_ns_id integer Inline indicator namespace ID for this session
+---@field keymaps table<integer, table<string, StagedKeymap>> Buffer-local keymaps owned by the session
 
 ---@class StagedConfig
 ---@field activation StagedActivationConfig

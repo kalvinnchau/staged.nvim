@@ -99,4 +99,16 @@ describe('comments', function()
     assert.is_not_nil(c2.id)
     assert.are_not.equals(c1.id, c2.id)
   end)
+
+  it('should reject invalid comments', function()
+    local original_notify = vim.notify
+    vim.notify = function() end
+
+    assert.is_nil(comments.add(0, 1, 'Invalid range'))
+    assert.is_nil(comments.add(3, 2, 'Invalid range'))
+    assert.is_nil(comments.add(1, 1, '  '))
+
+    vim.notify = original_notify
+    assert.equals(0, comments.count())
+  end)
 end)

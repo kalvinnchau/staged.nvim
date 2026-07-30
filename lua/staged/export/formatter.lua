@@ -3,6 +3,7 @@ local M = {}
 local state = require('staged.core.state')
 local config = require('staged.config')
 local position = require('staged.core.position')
+local comments = require('staged.core.comments')
 
 ---Get code lines from buffer
 ---@param bufnr integer
@@ -10,7 +11,7 @@ local position = require('staged.core.position')
 ---@param end_line integer
 ---@return string[]
 local function get_code_lines(bufnr, start_line, end_line)
-  if not vim.api.nvim_buf_is_valid(bufnr) then
+  if not vim.api.nvim_buf_is_valid(bufnr) or not vim.api.nvim_buf_is_loaded(bufnr) then
     return {}
   end
   return vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
@@ -18,7 +19,7 @@ end
 
 ---Format comments for export
 ---@param session StagedSession
----@param opts? { include_code?: boolean }
+---@param opts? { include_code?: boolean, format?: 'markdown'|'plain' }
 ---@return string
 function M.format(session, opts)
   opts = opts or {}
@@ -27,11 +28,10 @@ function M.format(session, opts)
     include_code = config.options.export.include_code
   end
 
-  local comments_module = require('staged.core.comments')
-  local grouped = comments_module.get_all_grouped()
+  local format = opts.format or config.options.export.format
+  local grouped = comments.get_all_grouped(session)
   local output = {}
 
-  -- Sort file paths for consistent ordering
   local file_paths = {}
   for file_path in pairs(grouped) do
     table.insert(file_paths, file_path)
@@ -42,9 +42,8 @@ function M.format(session, opts)
     local file_comments = grouped[file_path]
     local file_state = state.get_file_state(session, file_path)
 
-    -- File header
     local relative_path = vim.fn.fnamemodify(file_path, ':~:.')
-    table.insert(output, '## ' .. relative_path)
+    table.insert(output, format == 'plain' and relative_path or '## ' .. relative_path)
     table.insert(output, '')
 
     for _, comment in ipairs(file_comments) do
@@ -53,17 +52,19 @@ function M.format(session, opts)
         start_line, end_line = position.get_current_lines(session, file_state, comment)
       end
 
-      -- Line reference
+      local line_reference
       if start_line == end_line then
-        table.insert(output, '- **Line ' .. start_line .. '**: ' .. comment.text)
+        line_reference = 'Line ' .. start_line
       else
-        table.insert(
-          output,
-          '- **Lines ' .. start_line .. '-' .. end_line .. '**: ' .. comment.text
-        )
+        line_reference = 'Lines ' .. start_line .. '-' .. end_line
       end
 
-      -- Code snippet
+      if format == 'plain' then
+        table.insert(output, line_reference .. ': ' .. comment.text)
+      else
+        table.insert(output, '- **' .. line_reference .. '**: ' .. comment.text)
+      end
+
       if include_code and file_state then
         local code = get_code_lines(file_state.bufnr, start_line, end_line)
         local has_content = false
@@ -74,12 +75,18 @@ function M.format(session, opts)
           end
         end
         if #code > 0 and has_content then
-          local ext = vim.fn.fnamemodify(file_path, ':e')
-          table.insert(output, '```' .. ext)
-          for _, line in ipairs(code) do
-            table.insert(output, line)
+          if format == 'plain' then
+            for _, line in ipairs(code) do
+              table.insert(output, '    ' .. line)
+            end
+          else
+            local ext = vim.fn.fnamemodify(file_path, ':e')
+            table.insert(output, '```' .. ext)
+            for _, line in ipairs(code) do
+              table.insert(output, line)
+            end
+            table.insert(output, '```')
           end
-          table.insert(output, '```')
         end
       end
 
