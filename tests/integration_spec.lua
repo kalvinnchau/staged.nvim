@@ -551,6 +551,50 @@ describe('integration', function()
 
       session = helpers.create_mock_session(test_buf, '/test/example.lua')
     end)
+
+    it('should not let new history mappings override customized legacy actions', function()
+      local config = require('staged.config')
+      local original_edit = config.options.keymaps.edit
+      local original_delete = config.options.keymaps.delete
+      config.options.keymaps.edit = '<Char-117>'
+      config.options.keymaps.delete = 'r'
+
+      require('staged').bind_session_keymaps(session.tabpage)
+
+      local edit = vim.api.nvim_buf_call(test_buf, function()
+        return vim.fn.maparg('<leader>cu', 'n', false, true)
+      end)
+      local delete = vim.api.nvim_buf_call(test_buf, function()
+        return vim.fn.maparg('<leader>cr', 'n', false, true)
+      end)
+      config.options.keymaps.edit = original_edit
+      config.options.keymaps.delete = original_delete
+
+      assert.equals('Edit staged comment', edit.desc)
+      assert.equals('Delete staged comment', delete.desc)
+    end)
+
+    it('should not let sidebar history mappings override customized legacy actions', function()
+      local config = require('staged.config')
+      local original_clipboard = config.options.keymaps.export_clipboard
+      local original_buffer = config.options.keymaps.export_buffer
+      config.options.keymaps.export_clipboard = '<Char-117>'
+      config.options.keymaps.export_buffer = 'r'
+
+      sidebar.show(session)
+
+      local clipboard = vim.api.nvim_buf_call(session.sidebar_bufnr, function()
+        return vim.fn.maparg('<leader>cu', 'n', false, true)
+      end)
+      local buffer = vim.api.nvim_buf_call(session.sidebar_bufnr, function()
+        return vim.fn.maparg('<leader>cr', 'n', false, true)
+      end)
+      config.options.keymaps.export_clipboard = original_clipboard
+      config.options.keymaps.export_buffer = original_buffer
+
+      assert.equals('Export to clipboard', clipboard.desc)
+      assert.equals('Export to buffer', buffer.desc)
+    end)
   end)
 
   describe('full workflow', function()

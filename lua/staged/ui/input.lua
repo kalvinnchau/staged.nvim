@@ -93,7 +93,7 @@ function M.open_floating(opts, callback)
 
   vim.keymap.set({ 'n', 'i' }, '<C-s>', close(true), { buffer = buf })
   vim.keymap.set('n', '<CR>', close(true), { buffer = buf })
-  vim.keymap.set({ 'n', 'i' }, '<Esc>', close(false), { buffer = buf })
+  vim.keymap.set('n', '<Esc>', close(false), { buffer = buf })
   vim.keymap.set('n', 'q', close(false), { buffer = buf })
 
   vim.api.nvim_create_autocmd('BufLeave', {

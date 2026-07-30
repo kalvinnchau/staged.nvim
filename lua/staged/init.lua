@@ -46,8 +46,20 @@ local function bind_keymaps_to_buffer(session, buf)
 
   state.clear_keymaps(session, buf)
 
+  local mapped = {}
+  local function mapping_key(mode, lhs)
+    return mode .. '\0' .. vim.api.nvim_replace_termcodes(lhs, true, true, true)
+  end
+
   local function map(mode, lhs, callback, desc)
     state.set_keymap(session, buf, mode, lhs, callback, { desc = desc })
+    mapped[mapping_key(mode, lhs)] = true
+  end
+
+  local function map_new(mode, lhs, callback, desc)
+    if not mapped[mapping_key(mode, lhs)] then
+      map(mode, lhs, callback, desc)
+    end
   end
 
   map('n', prefix .. km.add, function()
@@ -69,14 +81,6 @@ local function bind_keymaps_to_buffer(session, buf)
   map('n', prefix .. km.clear_all, function()
     M.clear_all()
   end, 'Clear all staged comments')
-
-  map('n', prefix .. km.undo, function()
-    M.undo()
-  end, 'Undo staged comment change')
-
-  map('n', prefix .. km.redo, function()
-    M.redo()
-  end, 'Redo staged comment change')
 
   map('n', prefix .. km.toggle_sidebar, function()
     M.toggle_sidebar()
@@ -101,6 +105,14 @@ local function bind_keymaps_to_buffer(session, buf)
   map('n', km.prev_comment, function()
     M.goto_prev_comment()
   end, 'Previous staged comment')
+
+  map_new('n', prefix .. km.undo, function()
+    M.undo()
+  end, 'Undo staged comment change')
+
+  map_new('n', prefix .. km.redo, function()
+    M.redo()
+  end, 'Redo staged comment change')
 end
 
 ---Try to bind keymaps for the current buffer if in codediff

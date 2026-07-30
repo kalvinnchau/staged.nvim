@@ -254,8 +254,20 @@ function M.setup_keymaps(session)
   local prefix = km.prefix
   state.clear_keymaps(session, buf)
 
+  local mapped = {}
+  local function mapping_key(lhs)
+    return vim.api.nvim_replace_termcodes(lhs, true, true, true)
+  end
+
   local function map(lhs, callback, desc)
     state.set_keymap(session, buf, 'n', lhs, callback, { desc = desc })
+    mapped[mapping_key(lhs)] = true
+  end
+
+  local function map_new(lhs, callback, desc)
+    if not mapped[mapping_key(lhs)] then
+      map(lhs, callback, desc)
+    end
   end
 
   map('<CR>', function()
@@ -286,19 +298,19 @@ function M.setup_keymaps(session)
     require('staged.export').to_file()
   end, 'Export to file')
 
-  map(prefix .. km.undo, function()
-    require('staged').undo()
-  end, 'Undo comment change')
-
-  map(prefix .. km.redo, function()
-    require('staged').redo()
-  end, 'Redo comment change')
-
   map(prefix .. km.clear_all, function()
     require('staged.core.comments').clear_all(session)
     require('staged.ui.inline').clear_all(session)
     M.render(session)
   end, 'Clear all comments')
+
+  map_new(prefix .. km.undo, function()
+    require('staged').undo()
+  end, 'Undo comment change')
+
+  map_new(prefix .. km.redo, function()
+    require('staged').redo()
+  end, 'Redo comment change')
 end
 
 ---Show sidebar

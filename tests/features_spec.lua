@@ -121,7 +121,7 @@ describe('comment input', function()
     assert.is_nil(result)
   end)
 
-  it('closes floating input before invoking its callback', function()
+  it('keeps floating input open when leaving insert mode and saves with enter', function()
     local result = false
     local callback_count = 0
     local was_open_during_callback
@@ -137,12 +137,18 @@ describe('comment input', function()
 
     assert.equals('FloatBorder:StagedInputBorder', vim.wo[input_win].winhighlight)
     assert.is_not_nil(vim.fn.maparg('<Esc>', 'n', false, true).callback)
-    local escape = vim.fn.maparg('<Esc>', 'i', false, true)
-    assert.is_not_nil(escape.callback)
-    escape.callback()
+    assert.is_nil(vim.fn.maparg('<Esc>', 'i', false, true).callback)
+
+    vim.cmd('stopinsert')
+    assert.is_true(vim.api.nvim_win_is_valid(input_win))
+    assert.equals(0, callback_count)
+
+    local enter = vim.fn.maparg('<CR>', 'n', false, true)
+    assert.is_not_nil(enter.callback)
+    enter.callback()
 
     assert.equals(1, callback_count)
-    assert.is_nil(result)
+    assert.equals('first\nsecond', result)
     assert.is_false(was_open_during_callback)
   end)
 

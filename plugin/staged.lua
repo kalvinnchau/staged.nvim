@@ -19,10 +19,26 @@ end
 
 ---@param arg_lead string
 ---@param command_line string
+---@param cursor_position integer
 ---@return string[]
-local function complete_export(arg_lead, command_line)
-  local arguments = vim.split(vim.trim(command_line), '%s+')
-  local index = #arguments - 1 + (command_line:match('%s$') and 1 or 0)
+local function complete_export(arg_lead, command_line, cursor_position)
+  local before_cursor = command_line:sub(1, cursor_position)
+  local command
+  local next_command = before_cursor
+  while next_command ~= '' do
+    local ok, parsed = pcall(vim.api.nvim_parse_cmd, next_command, {})
+    if not ok then
+      return {}
+    end
+    command = parsed
+    next_command = parsed.nextcmd or ''
+  end
+
+  if not command or command.cmd ~= 'StagedExport' then
+    return {}
+  end
+
+  local index = #command.args + (before_cursor:match('%s$') and 1 or 0)
   local candidates = index <= 1 and export_destinations or index == 2 and export_formats or {}
 
   return vim.tbl_filter(function(value)

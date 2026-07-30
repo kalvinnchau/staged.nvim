@@ -76,4 +76,20 @@ describe('commands', function()
     assert.equals('Unknown format: yaml', calls[2].message)
     assert.equals('Usage: StagedExport [destination] [format]', calls[3].message)
   end)
+
+  it('completes export arguments after command modifiers', function()
+    assert.same(
+      { 'clipboard', 'buffer', 'file' },
+      vim.fn.getcompletion('silent StagedExp ', 'cmdline')
+    )
+    assert.same(
+      { 'markdown', 'plain', 'json' },
+      vim.fn.getcompletion('vertical StagedExport buffer ', 'cmdline')
+    )
+    assert.same(
+      { 'clipboard', 'buffer', 'file' },
+      vim.fn.getcompletion('set statusline=StagedExport | StagedExport ', 'cmdline')
+    )
+    assert.same({}, vim.fn.getcompletion('StagedExport file StagedExport ', 'cmdline'))
+  end)
 end)

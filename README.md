@@ -95,8 +95,8 @@ in the floating input window:
 
 - `<C-s>` - save comment
 - `<CR>` - save (normal mode)
-- `<Esc>` - cancel
-- `q` - cancel
+- `<Esc>` - leave insert mode; cancel when already in normal mode
+- `q` - cancel (normal mode)
 
 ## commands
 
