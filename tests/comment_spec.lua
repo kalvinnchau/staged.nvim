@@ -111,4 +111,14 @@ describe('comments', function()
     vim.notify = original_notify
     assert.equals(0, comments.count())
   end)
+
+  it('should reject mutations on a destroyed session', function()
+    local session = state.get_current_session()
+    state.destroy_session(session.tabpage)
+
+    assert.is_nil(comments.add(1, 1, 'stale', session))
+    assert.is_false(comments.edit('missing', 'stale', session))
+    assert.is_false(comments.delete('missing', session))
+    assert.equals(0, vim.tbl_count(session.files[test_path].comments))
+  end)
 end)

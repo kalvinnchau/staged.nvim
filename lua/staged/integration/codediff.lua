@@ -35,6 +35,20 @@ local function absolute_path(path_ref)
   return nil
 end
 
+---@param codediff_session table
+---@param modified_path string
+---@return string
+local function get_session_root(codediff_session, modified_path)
+  local explorer_root = codediff_session.explorer and codediff_session.explorer.dir2 or nil
+  if type(codediff_session.git_root) == 'string' and codediff_session.git_root ~= '' then
+    return codediff_session.git_root
+  end
+  if type(explorer_root) == 'string' and explorer_root ~= '' then
+    return explorer_root
+  end
+  return vim.fs.dirname(modified_path)
+end
+
 ---@param lifecycle table
 ---@param tabpage integer
 ---@param codediff_session table
@@ -94,7 +108,8 @@ end
 ---@param tabpage integer
 ---@return boolean
 local function should_sync(tabpage)
-  return config.options.activation.mode == 'auto' or state.get_session(tabpage) ~= nil
+  return not state.is_destroying(tabpage)
+    and (config.options.activation.mode == 'auto' or state.get_session(tabpage) ~= nil)
 end
 
 ---@param tabpage integer
@@ -197,6 +212,10 @@ end
 ---@param tabpage integer
 ---@return StagedSession|nil
 function M.init_for_codediff(tabpage)
+  if state.is_destroying(tabpage) then
+    return nil
+  end
+
   local lifecycle = get_lifecycle()
   local codediff_session = lifecycle and M.get_codediff_session(tabpage) or nil
   if not codediff_session then
@@ -216,6 +235,7 @@ function M.init_for_codediff(tabpage)
   if not session then
     session = state.create_session(tabpage)
   end
+  session.root = get_session_root(codediff_session, modified_path)
 
   state.set_current_file(session, modified_path, modified_bufnr)
   require('staged.ui.inline').render(session)

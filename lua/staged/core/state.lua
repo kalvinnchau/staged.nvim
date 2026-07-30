@@ -3,6 +3,9 @@ local M = {}
 ---@type table<integer, StagedSession> Sessions indexed by tabpage ID
 local sessions = {}
 
+---@type table<integer, boolean> Tabpages currently being torn down
+local destroying = {}
+
 ---@class StagedManagedKeymap
 ---@field owners table<StagedSession, boolean>
 ---@field previous? table
@@ -14,12 +17,19 @@ local managed_keymaps = {}
 ---@param tabpage integer Tabpage ID
 ---@return StagedSession
 function M.create_session(tabpage)
+  if sessions[tabpage] then
+    M.destroy_session(tabpage)
+  end
+
   local ns_id = vim.api.nvim_create_namespace('staged-' .. tabpage)
   local indicator_ns_id = vim.api.nvim_create_namespace('staged-indicators-' .. tabpage)
+  local history_ns_id = vim.api.nvim_create_namespace('staged-history-' .. tabpage)
 
   ---@type StagedSession
   local session = {
     tabpage = tabpage,
+    active = true,
+    root = vim.fn.getcwd(),
     files = {},
     current_file = nil,
     sidebar_bufnr = nil,
@@ -27,7 +37,12 @@ function M.create_session(tabpage)
     visible = false,
     ns_id = ns_id,
     indicator_ns_id = indicator_ns_id,
+    history_ns_id = history_ns_id,
     keymaps = {},
+    history = {
+      undo = {},
+      redo = {},
+    },
   }
 
   sessions[tabpage] = session
@@ -44,6 +59,12 @@ end
 function M.get_current_session()
   local tabpage = vim.api.nvim_get_current_tabpage()
   return sessions[tabpage]
+end
+
+---@param tabpage integer
+---@return boolean
+function M.is_destroying(tabpage)
+  return destroying[tabpage] == true
 end
 
 ---@param bufnr integer
@@ -204,6 +225,7 @@ function M.set_current_file(session, file_path, bufnr)
     comment.end_line = end_line
   end
 
+  require('staged.core.history').migrate_anchors(session, file_path, file_state, bufnr)
   file_state.bufnr = bufnr
   for _, comment in pairs(file_state.comments) do
     comment.extmark_id = position.create_mark(session, file_state, comment)
@@ -245,22 +267,39 @@ end
 
 ---@param tabpage integer
 function M.destroy_session(tabpage)
+  if destroying[tabpage] then
+    return
+  end
+
   local session = sessions[tabpage]
-  if session then
+  if not session then
+    return
+  end
+
+  destroying[tabpage] = true
+  sessions[tabpage] = nil
+  session.active = false
+
+  local ok, err = pcall(function()
     M.clear_keymaps(session)
 
     for _, file_state in pairs(session.files) do
       if vim.api.nvim_buf_is_valid(file_state.bufnr) then
         vim.api.nvim_buf_clear_namespace(file_state.bufnr, session.ns_id, 0, -1)
         vim.api.nvim_buf_clear_namespace(file_state.bufnr, session.indicator_ns_id, 0, -1)
+        vim.api.nvim_buf_clear_namespace(file_state.bufnr, session.history_ns_id, 0, -1)
       end
     end
 
     if session.sidebar_bufnr and vim.api.nvim_buf_is_valid(session.sidebar_bufnr) then
       vim.api.nvim_buf_delete(session.sidebar_bufnr, { force = true })
     end
+  end)
+
+  destroying[tabpage] = nil
+  if not ok then
+    error(err, 0)
   end
-  sessions[tabpage] = nil
 end
 
 ---@return table<integer, StagedSession>

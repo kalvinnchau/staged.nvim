@@ -11,6 +11,8 @@ M.defaults = {
     edit = 'e',
     delete = 'd',
     clear_all = 'D',
+    undo = 'u',
+    redo = 'r',
     toggle_sidebar = 's',
     export_clipboard = 'y',
     export_buffer = 'b',
@@ -46,7 +48,7 @@ local enums = {
   ['sidebar.position'] = { 'left', 'right' },
   ['inline.style'] = { 'sign', 'virtual_text', 'line_highlight' },
   ['input.style'] = { 'floating', 'inline' },
-  ['export.format'] = { 'markdown', 'plain' },
+  ['export.format'] = { 'markdown', 'plain', 'json' },
 }
 
 ---@param name string

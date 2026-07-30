@@ -1,6 +1,11 @@
 local M = {}
 
 local export_buffer_name = 'Staged Comments Export'
+local export_filetypes = {
+  markdown = 'markdown',
+  plain = 'text',
+  json = 'json',
+}
 
 ---@return string
 local function next_buffer_name()
@@ -29,7 +34,7 @@ end
 
 ---Open content in new buffer
 ---@param content string
----@param format? 'markdown'|'plain'
+---@param format? 'markdown'|'plain'|'json'
 function M.to_buffer(content, format)
   vim.cmd('tabnew')
   local buf = vim.api.nvim_get_current_buf()
@@ -37,7 +42,7 @@ function M.to_buffer(content, format)
   vim.bo[buf].buftype = 'nofile'
   vim.bo[buf].bufhidden = 'wipe'
   vim.bo[buf].swapfile = false
-  vim.bo[buf].filetype = format == 'plain' and 'text' or 'markdown'
+  vim.bo[buf].filetype = export_filetypes[format] or 'markdown'
 
   local lines = vim.split(content, '\n')
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)

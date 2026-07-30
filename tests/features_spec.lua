@@ -18,7 +18,7 @@ describe('feature configuration', function()
       { 'sidebar.position', { sidebar = { position = 'top' } } },
       { 'inline.style', { inline = { style = 'conceal' } } },
       { 'input.style', { input = { style = 'popup' } } },
-      { 'export.format', { export = { format = 'json' } } },
+      { 'export.format', { export = { format = 'yaml' } } },
     }
 
     for _, case in ipairs(cases) do

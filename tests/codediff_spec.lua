@@ -84,8 +84,29 @@ describe('codediff integration', function()
     local session = codediff.init_for_codediff(tabpage)
 
     assert.equals('/repo/modified.lua', session.current_file)
+    assert.equals('/repo', session.root)
     assert.equals(modified_bufnr, state.get_current_bufnr(session))
     assert.equals(tabpage, bound_tabpage)
+  end)
+
+  it('uses the modified directory explorer root', function()
+    local modified_bufnr = create_buffer()
+    codediff_session = {
+      explorer = {
+        dir2 = '/modified-root',
+      },
+    }
+    lifecycle.get_buffers = function()
+      return 1, modified_bufnr
+    end
+    lifecycle.get_paths = function()
+      return '/original-root/nested/file.lua', '/modified-root/nested/file.lua'
+    end
+    reload_integration()
+
+    local session = codediff.init_for_codediff(tabpage)
+
+    assert.equals('/modified-root', session.root)
   end)
 
   it('supports legacy session buffer and path fields', function()
@@ -233,6 +254,44 @@ describe('codediff integration', function()
 
     assert.is_nil(state.get_session(other_tabpage))
     assert.equals(current_session, state.get_session(tabpage))
+  end)
+
+  it('does not recreate ui while destroying a focused sidebar', function()
+    local modified_bufnr = create_buffer()
+    codediff_session = {
+      stored_diff_result = {},
+    }
+    lifecycle.get_buffers = function()
+      return 1, modified_bufnr
+    end
+    lifecycle.get_paths = function()
+      return '/repo/original.lua', '/repo/modified.lua'
+    end
+    reload_integration()
+
+    local session = codediff.init_for_codediff(tabpage)
+    require('staged.core.comments').add(1, 1, 'comment', session)
+    require('staged.ui.inline').render(session)
+    require('staged.ui.sidebar').show(session)
+    vim.api.nvim_set_current_win(session.sidebar_winid)
+
+    assert.equals(
+      1,
+      #vim.api.nvim_buf_get_extmarks(modified_bufnr, session.indicator_ns_id, 0, -1, {})
+    )
+
+    state.destroy_session(tabpage)
+
+    local mapping = vim.api.nvim_buf_call(modified_bufnr, function()
+      return vim.fn.maparg(']m', 'n', false, true)
+    end)
+    assert.is_nil(state.get_session(tabpage))
+    assert.is_false(state.is_destroying(tabpage))
+    assert.equals(
+      0,
+      #vim.api.nvim_buf_get_extmarks(modified_bufnr, session.indicator_ns_id, 0, -1, {})
+    )
+    assert.not_equals('Next staged comment', mapping.desc)
   end)
 
   it('removes sessions whose tab handles became invalid', function()

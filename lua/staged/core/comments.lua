@@ -2,6 +2,8 @@ local M = {}
 
 local state = require('staged.core.state')
 local position = require('staged.core.position')
+local events = require('staged.core.events')
+local history = require('staged.core.history')
 
 local id_counter = 0
 
@@ -30,7 +32,38 @@ end
 ---@param session? StagedSession
 ---@return StagedSession|nil
 local function resolve_session(session)
-  return session or state.get_current_session()
+  session = session or state.get_current_session()
+  if session and session.active == false then
+    return nil
+  end
+  return session
+end
+
+---@param pattern string
+---@param session StagedSession
+---@param action string
+---@param data table
+local function emit_change(pattern, session, action, data)
+  data = vim.tbl_extend('force', {
+    action = action,
+    total_count = state.total_comment_count(session),
+  }, data)
+  events.emit_many(session, {
+    { pattern = pattern, data = data },
+    { pattern = 'StagedCommentsChanged', data = data },
+  })
+end
+
+---@param comment StagedComment
+---@param start_line? integer
+---@param end_line? integer
+---@return table
+local function comment_event_data(comment, start_line, end_line)
+  return {
+    comment_id = comment.id,
+    file_path = comment.file_path,
+    comment = events.comment_data(comment, start_line, end_line),
+  }
 end
 
 ---@param session StagedSession
@@ -54,6 +87,9 @@ local function sort_comments(session, file_state, list)
     end
     if a.created_at ~= b.created_at then
       return a.created_at < b.created_at
+    end
+    if a.created_order ~= b.created_order then
+      return a.created_order < b.created_order
     end
     return a.id < b.id
   end)
@@ -95,6 +131,8 @@ function M.add(start_line, end_line, text, session)
     return nil
   end
 
+  local before = history.snapshot(session)
+
   ---@type StagedComment
   local comment = {
     id = uuid(),
@@ -103,6 +141,7 @@ function M.add(start_line, end_line, text, session)
     end_line = end_line,
     text = text,
     created_at = os.time(),
+    created_order = id_counter,
     extmark_id = nil,
   }
 
@@ -111,6 +150,15 @@ function M.add(start_line, end_line, text, session)
 
   -- Store in file state
   file_state.comments[comment.id] = comment
+
+  history.record(session, before, 'add')
+  local current_start, current_end = position.get_current_lines(session, file_state, comment)
+  emit_change(
+    'StagedCommentAdded',
+    session,
+    'add',
+    comment_event_data(comment, current_start, current_end)
+  )
 
   return comment
 end
@@ -135,7 +183,20 @@ function M.edit(comment_id, new_text, session)
   for _, file_state in pairs(session.files) do
     local comment = file_state.comments[comment_id]
     if comment then
+      if comment.text == new_text then
+        return true
+      end
+
+      local before = history.snapshot(session)
       comment.text = new_text
+      history.record(session, before, 'edit')
+      local start_line, end_line = position.get_current_lines(session, file_state, comment)
+      emit_change(
+        'StagedCommentEdited',
+        session,
+        'edit',
+        comment_event_data(comment, start_line, end_line)
+      )
       return true
     end
   end
@@ -157,8 +218,13 @@ function M.delete(comment_id, session)
   for _, file_state in pairs(session.files) do
     local comment = file_state.comments[comment_id]
     if comment then
+      local before = history.snapshot(session)
+      local start_line, end_line = position.get_current_lines(session, file_state, comment)
+      local data = comment_event_data(comment, start_line, end_line)
       position.delete_mark(session, file_state, comment)
       file_state.comments[comment_id] = nil
+      history.record(session, before, 'delete')
+      emit_change('StagedCommentDeleted', session, 'delete', data)
       return true
     end
   end
@@ -179,11 +245,26 @@ function M.clear_current_file(session)
     return
   end
 
+  local count = 0
+  for _ in pairs(file_state.comments) do
+    count = count + 1
+  end
+  if count == 0 then
+    return
+  end
+
+  local before = history.snapshot(session)
   for _, comment in pairs(file_state.comments) do
     position.delete_mark(session, file_state, comment)
   end
 
   file_state.comments = {}
+  history.record(session, before, 'clear_current_file')
+  emit_change('StagedCommentsCleared', session, 'clear_current_file', {
+    count = count,
+    file_path = session.current_file,
+    scope = 'file',
+  })
 end
 
 ---Clear all comments in all files
@@ -194,37 +275,58 @@ function M.clear_all(session)
     return
   end
 
+  local count = state.total_comment_count(session)
+  if count == 0 then
+    return
+  end
+
+  local before = history.snapshot(session)
   for _, file_state in pairs(session.files) do
     for _, comment in pairs(file_state.comments) do
       position.delete_mark(session, file_state, comment)
     end
     file_state.comments = {}
   end
+
+  history.record(session, before, 'clear_all')
+  emit_change('StagedCommentsCleared', session, 'clear_all', {
+    count = count,
+    scope = 'session',
+  })
 end
 
----Get comment at a specific line in current file
+---Get all comments at a specific line in the current file
 ---@param line integer 1-based line number
 ---@param session? StagedSession
----@return StagedComment|nil
-function M.get_at_line(line, session)
+---@return StagedComment[]
+function M.get_all_at_line(line, session)
   session = resolve_session(session)
   if not session then
-    return nil
+    return {}
   end
 
   local file_state = state.get_current_file_state(session)
   if not file_state then
-    return nil
+    return {}
   end
 
+  local matches = {}
   for _, comment in ipairs(M.get_sorted(session)) do
     local current_start, current_end = position.get_current_lines(session, file_state, comment)
     if line >= current_start and line <= current_end then
-      return comment
+      table.insert(matches, comment)
     end
   end
 
-  return nil
+  return matches
+end
+
+---Get the first comment at a specific line in the current file
+---@param line integer 1-based line number
+---@param session? StagedSession
+---@return StagedComment|nil
+function M.get_at_line(line, session)
+  return M.get_all_at_line(line, session)[1]
 end
 
 ---Get all comments in current file sorted by line number

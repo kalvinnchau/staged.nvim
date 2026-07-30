@@ -217,6 +217,34 @@ describe('integration', function()
       config.options.sidebar.auto_show = original
     end)
 
+    it('should ignore delayed edits after the session closes', function()
+      local comment = helpers.add_comment(3, 3, 'original')
+      sidebar.show(session)
+      local lines = helpers.get_buffer_lines(session.sidebar_bufnr)
+      local comment_line
+      for line, text in ipairs(lines) do
+        if text:find('original', 1, true) then
+          comment_line = line
+          break
+        end
+      end
+      vim.api.nvim_set_current_win(session.sidebar_winid)
+      vim.api.nvim_win_set_cursor(0, { comment_line, 0 })
+
+      local input = require('staged.ui.input')
+      local original_open = input.open
+      local submit
+      input.open = function(_, callback)
+        submit = callback
+      end
+      sidebar.edit_comment(session)
+      state.destroy_session(session.tabpage)
+      submit('late edit')
+      input.open = original_open
+
+      assert.equals('original', comment.text)
+    end)
+
     it('should resolve the current line when jumping from stale sidebar content', function()
       helpers.add_comment(3, 3, 'Moving comment')
       sidebar.show(session)

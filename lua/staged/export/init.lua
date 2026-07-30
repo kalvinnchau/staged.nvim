@@ -6,7 +6,7 @@ local formatter = require('staged.export.formatter')
 local destinations = require('staged.export.destinations')
 
 ---Export comments to clipboard
----@param opts? { include_code?: boolean, format?: 'markdown'|'plain' }
+---@param opts? { include_code?: boolean, format?: 'markdown'|'plain'|'json' }
 function M.to_clipboard(opts)
   local session = state.get_current_session()
   if not session then
@@ -19,7 +19,7 @@ function M.to_clipboard(opts)
 end
 
 ---Export comments to new buffer
----@param opts? { include_code?: boolean, format?: 'markdown'|'plain' }
+---@param opts? { include_code?: boolean, format?: 'markdown'|'plain'|'json' }
 function M.to_buffer(opts)
   local session = state.get_current_session()
   if not session then
@@ -34,7 +34,7 @@ end
 
 ---Export comments to file
 ---@param path? string
----@param opts? { include_code?: boolean, format?: 'markdown'|'plain' }
+---@param opts? { include_code?: boolean, format?: 'markdown'|'plain'|'json' }
 function M.to_file(path, opts)
   local session = state.get_current_session()
   if not session then

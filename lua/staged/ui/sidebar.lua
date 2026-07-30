@@ -17,6 +17,20 @@ local line_data = {}
 
 ---@param session StagedSession
 ---@return boolean
+local function session_is_active(session)
+  return state.get_session(session.tabpage) == session
+end
+
+---@param session StagedSession
+---@param file_state StagedFileState
+---@param comment StagedComment
+---@return boolean
+local function comment_is_active(session, file_state, comment)
+  return session_is_active(session) and file_state.comments[comment.id] == comment
+end
+
+---@param session StagedSession
+---@return boolean
 local function is_visible(session)
   return session.sidebar_winid ~= nil and vim.api.nvim_win_is_valid(session.sidebar_winid)
 end
@@ -272,6 +286,14 @@ function M.setup_keymaps(session)
     require('staged.export').to_file()
   end, 'Export to file')
 
+  map(prefix .. km.undo, function()
+    require('staged').undo()
+  end, 'Undo comment change')
+
+  map(prefix .. km.redo, function()
+    require('staged').redo()
+  end, 'Redo comment change')
+
   map(prefix .. km.clear_all, function()
     require('staged.core.comments').clear_all(session)
     require('staged.ui.inline').clear_all(session)
@@ -404,8 +426,12 @@ function M.edit_comment(session)
 
   local input = require('staged.ui.input')
   input.open({ title = 'Edit Comment', initial_text = comment.text }, function(text)
-    if text then
-      comments.edit(entry.comment_id, text, session)
+    if
+      text
+      and comment_is_active(session, file_state, comment)
+      and comments.edit(entry.comment_id, text, session)
+      and session_is_active(session)
+    then
       M.render(session)
     end
   end)
@@ -426,10 +452,15 @@ function M.delete_comment(session)
     return
   end
 
-  comments.delete(entry.comment_id, session)
-  M.render(session)
-  if entry.file_path == session.current_file then
-    require('staged.ui.inline').render(session)
+  if
+    session_is_active(session)
+    and comments.delete(entry.comment_id, session)
+    and session_is_active(session)
+  then
+    M.render(session)
+    if entry.file_path == session.current_file then
+      require('staged.ui.inline').render(session)
+    end
   end
 end
 

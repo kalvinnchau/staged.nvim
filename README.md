@@ -38,6 +38,8 @@ comments live on the modified side, track line positions, and disappear when the
       edit = 'e',           -- edit comment
       delete = 'd',         -- delete comment
       clear_all = 'D',      -- clear all comments
+      undo = 'u',           -- undo comment change
+      redo = 'r',           -- redo comment change
       toggle_sidebar = 's', -- toggle sidebar
       export_clipboard = 'y', -- export to clipboard
       export_buffer = 'b',  -- export to buffer
@@ -61,7 +63,7 @@ comments live on the modified side, track line positions, and disappear when the
     },
     export = {
       include_code = true, -- include code snippets in export
-      format = 'markdown',  -- 'markdown' or 'plain'
+      format = 'markdown',  -- 'markdown', 'plain', or 'json'
     },
   },
 }
@@ -75,6 +77,7 @@ in codediff modified buffer:
 - `<leader>ce` - edit
 - `<leader>cd` - delete
 - `<leader>cD` - clear all
+- `<leader>cu` / `<leader>cr` - undo/redo comment changes
 - `<leader>cs` - toggle sidebar
 - `<leader>cy` - export to clipboard
 - `<leader>cb` - export to buffer
@@ -101,19 +104,44 @@ in the floating input window:
 - `:StagedEdit` - edit comment at cursor
 - `:StagedDelete` - delete comment at cursor
 - `:StagedClear` - clear all comments
+- `:StagedUndo` / `:StagedRedo` - undo/redo comment changes
 - `:StagedToggle` - toggle sidebar
-- `:StagedExport [clipboard|buffer|file]` - export comments
+- `:StagedExport [clipboard|buffer|file] [markdown|plain|json]` - export comments
 - `:StagedEnable` - enable for current codediff (manual mode)
 
 ## export
 
-outputs markdown or plain text with optional code snippets:
+outputs markdown, plain text, or versioned JSON with optional code snippets:
 
 ```markdown
 ## path/to/file.lua
 
 - **Line 10**: needs error handling
 ```
+
+```json
+{"schema_version":1,"comments":[{"path":"lua/example.lua","start_line":10,"end_line":10,"text":"needs error handling"}]}
+```
+
+JSON paths are relative to the codediff session root and omitted for files outside it.
+
+## events
+
+comment mutations emit `User` events:
+
+- `StagedCommentAdded`
+- `StagedCommentEdited`
+- `StagedCommentDeleted`
+- `StagedCommentsCleared`
+- `StagedCommentsChanged` - emitted for every mutation, undo, and redo
+
+Event data includes the tabpage, action, and total comment count. Comment events also include
+`comment_id`, `file_path`, and a comment snapshot without internal extmark state.
+
+## health
+
+Run `:checkhealth staged` to verify Neovim, configuration, codediff lifecycle accessors, the
+current codediff session, and optional clipboard support.
 
 ## development
 
