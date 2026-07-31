@@ -8,6 +8,7 @@ vim.opt.shadafile = 'NONE'
 -- Add plugin to runtimepath
 local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h:h')
 vim.opt.rtp:prepend(plugin_dir)
+vim.cmd('runtime plugin/staged.lua')
 
 -- Setup the plugin
 require('staged').setup()

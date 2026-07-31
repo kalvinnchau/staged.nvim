@@ -5,14 +5,35 @@ local config = require('staged.config')
 local comments = require('staged.core.comments')
 local position = require('staged.core.position')
 
+local ns_highlights = vim.api.nvim_create_namespace('staged-sidebar-highlights')
+
 ---@class SidebarLine
 ---@field type 'file'|'range'|'comment'|'empty'
 ---@field comment_id? string
----@field line_nr? integer
 ---@field file_path? string
 
 ---@type table<integer, SidebarLine[]> Line metadata per sidebar buffer
 local line_data = {}
+
+---@param session StagedSession
+---@return boolean
+local function session_is_active(session)
+  return state.get_session(session.tabpage) == session
+end
+
+---@param session StagedSession
+---@param file_state StagedFileState
+---@param comment StagedComment
+---@return boolean
+local function comment_is_active(session, file_state, comment)
+  return session_is_active(session) and file_state.comments[comment.id] == comment
+end
+
+---@param session StagedSession
+---@return boolean
+local function is_visible(session)
+  return session.sidebar_winid ~= nil and vim.api.nvim_win_is_valid(session.sidebar_winid)
+end
 
 ---Create sidebar buffer
 ---@param session StagedSession
@@ -24,7 +45,20 @@ local function create_buffer(session)
   vim.bo[buf].bufhidden = 'wipe'
   vim.bo[buf].swapfile = false
   vim.bo[buf].filetype = 'staged-sidebar'
-  vim.api.nvim_buf_set_name(buf, 'Staged Comments')
+  vim.api.nvim_buf_set_name(buf, 'staged://comments/' .. session.tabpage)
+
+  vim.api.nvim_create_autocmd('BufWipeout', {
+    buffer = buf,
+    once = true,
+    callback = function()
+      line_data[buf] = nil
+      if session.sidebar_bufnr == buf then
+        session.sidebar_bufnr = nil
+        session.sidebar_winid = nil
+        session.visible = false
+      end
+    end,
+  })
 
   return buf
 end
@@ -114,14 +148,14 @@ function M.render(session)
     return
   end
 
-  local grouped = comments.get_all_grouped()
+  local grouped = comments.get_all_grouped(session)
   local lines = {}
   local hl_ranges = {}
   line_data[session.sidebar_bufnr] = {}
   local data = line_data[session.sidebar_bufnr]
 
   -- Title
-  table.insert(lines, 'Comments:')
+  table.insert(lines, string.format('Comments (%d):', state.total_comment_count(session)))
   table.insert(data, { type = 'empty' })
 
   -- Sort file paths for consistent ordering
@@ -136,7 +170,7 @@ function M.render(session)
     local file_state = state.get_file_state(session, file_path)
 
     -- Filename header
-    local filename = vim.fn.fnamemodify(file_path, ':t')
+    local filename = vim.fn.fnamemodify(file_path, ':~:.')
     if filename == '' then
       filename = '[buffer]'
     end
@@ -168,16 +202,26 @@ function M.render(session)
       local full_line = '  ' .. range_text .. ': ' .. first_line
       table.insert(lines, full_line)
       table.insert(hl_ranges, { #lines, 2, #range_text, 'StagedSidebarLineNr' })
-      table.insert(
-        data,
-        { type = 'range', comment_id = comment.id, line_nr = start_line, file_path = file_path }
-      )
+      if first_line ~= '' then
+        table.insert(
+          hl_ranges,
+          { #lines, 2 + #range_text + 2, #first_line, 'StagedSidebarComment' }
+        )
+      end
+      table.insert(data, { type = 'range', comment_id = comment.id, file_path = file_path })
 
       -- Additional comment lines (indented to align with first line)
       local indent = string.rep(' ', 2 + #range_text + 2)
       for i = 2, #comment_lines do
         table.insert(lines, indent .. comment_lines[i])
-        table.insert(data, { type = 'comment', comment_id = comment.id, file_path = file_path })
+        if comment_lines[i] ~= '' then
+          table.insert(hl_ranges, { #lines, #indent, #comment_lines[i], 'StagedSidebarComment' })
+        end
+        table.insert(data, {
+          type = 'comment',
+          comment_id = comment.id,
+          file_path = file_path,
+        })
       end
     end
   end
@@ -188,11 +232,10 @@ function M.render(session)
   vim.bo[session.sidebar_bufnr].modifiable = false
 
   -- Apply highlights using extmarks (0.10+)
-  local ns = vim.api.nvim_create_namespace('staged-sidebar-hl')
-  vim.api.nvim_buf_clear_namespace(session.sidebar_bufnr, ns, 0, -1)
+  vim.api.nvim_buf_clear_namespace(session.sidebar_bufnr, ns_highlights, 0, -1)
   for _, hl in ipairs(hl_ranges) do
     local line_idx, col_start, col_end, hl_group = hl[1], hl[2], hl[3], hl[4]
-    vim.api.nvim_buf_set_extmark(session.sidebar_bufnr, ns, line_idx - 1, col_start, {
+    vim.api.nvim_buf_set_extmark(session.sidebar_bufnr, ns_highlights, line_idx - 1, col_start, {
       end_col = col_start + col_end,
       hl_group = hl_group,
     })
@@ -201,81 +244,112 @@ end
 
 ---Setup keymaps for sidebar buffer
 ---@param session StagedSession
-local function setup_keymaps(session)
+function M.setup_keymaps(session)
   local buf = session.sidebar_bufnr
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+
   local km = config.options.keymaps
   local prefix = km.prefix
+  state.clear_keymaps(session, buf)
 
-  -- Jump to comment location
-  vim.keymap.set('n', '<CR>', function()
+  local mapped = {}
+  local function mapping_key(lhs)
+    return vim.api.nvim_replace_termcodes(lhs, true, true, true)
+  end
+
+  local function map(lhs, callback, desc)
+    state.set_keymap(session, buf, 'n', lhs, callback, { desc = desc })
+    mapped[mapping_key(lhs)] = true
+  end
+
+  local function map_new(lhs, callback, desc)
+    if not mapped[mapping_key(lhs)] then
+      map(lhs, callback, desc)
+    end
+  end
+
+  map('<CR>', function()
     M.goto_comment(session)
-  end, { buffer = buf, desc = 'Go to comment' })
+  end, 'Go to comment')
 
-  -- Edit comment
-  vim.keymap.set('n', 'e', function()
+  map('e', function()
     M.edit_comment(session)
-  end, { buffer = buf, desc = 'Edit comment' })
+  end, 'Edit comment')
 
-  -- Delete comment
-  vim.keymap.set('n', 'd', function()
+  map('d', function()
     M.delete_comment(session)
-  end, { buffer = buf, desc = 'Delete comment' })
+  end, 'Delete comment')
 
-  -- Close sidebar
-  vim.keymap.set('n', 'q', function()
+  map('q', function()
     M.hide(session)
-  end, { buffer = buf, desc = 'Close sidebar' })
+  end, 'Close sidebar')
 
-  -- Export keymaps (same as main buffer)
-  vim.keymap.set('n', prefix .. km.export_clipboard, function()
+  map(prefix .. km.export_clipboard, function()
     require('staged.export').to_clipboard()
-  end, { buffer = buf, desc = 'Export to clipboard' })
+  end, 'Export to clipboard')
 
-  vim.keymap.set('n', prefix .. km.export_buffer, function()
+  map(prefix .. km.export_buffer, function()
     require('staged.export').to_buffer()
-  end, { buffer = buf, desc = 'Export to buffer' })
+  end, 'Export to buffer')
 
-  vim.keymap.set('n', prefix .. km.export_file, function()
+  map(prefix .. km.export_file, function()
     require('staged.export').to_file()
-  end, { buffer = buf, desc = 'Export to file' })
+  end, 'Export to file')
 
-  -- Clear all
-  vim.keymap.set('n', prefix .. km.clear_all, function()
-    require('staged.core.comments').clear_all()
-    require('staged.ui.inline').render(session)
+  map(prefix .. km.clear_all, function()
+    require('staged.core.comments').clear_all(session)
+    require('staged.ui.inline').clear_all(session)
     M.render(session)
-  end, { buffer = buf, desc = 'Clear all comments' })
+  end, 'Clear all comments')
+
+  map_new(prefix .. km.undo, function()
+    require('staged').undo()
+  end, 'Undo comment change')
+
+  map_new(prefix .. km.redo, function()
+    require('staged').redo()
+  end, 'Redo comment change')
 end
 
 ---Show sidebar
 ---@param session StagedSession
 function M.show(session)
-  if session.visible then
+  if is_visible(session) then
     return
   end
 
-  -- Create buffer if needed
+  session.sidebar_winid = nil
+  session.visible = false
+
   if not session.sidebar_bufnr or not vim.api.nvim_buf_is_valid(session.sidebar_bufnr) then
     session.sidebar_bufnr = create_buffer(session)
-    setup_keymaps(session)
+    M.setup_keymaps(session)
   end
 
-  -- Create window
   session.sidebar_winid = create_window(session)
   vim.api.nvim_win_set_buf(session.sidebar_winid, session.sidebar_bufnr)
 
   session.visible = true
+  local winid = session.sidebar_winid
+  vim.api.nvim_create_autocmd('WinClosed', {
+    pattern = tostring(winid),
+    once = true,
+    callback = function()
+      if session.sidebar_winid == winid then
+        session.sidebar_winid = nil
+        session.visible = false
+      end
+    end,
+  })
   M.render(session)
 end
 
 ---Hide sidebar
 ---@param session StagedSession
 function M.hide(session)
-  if not session.visible then
-    return
-  end
-
-  if session.sidebar_winid and vim.api.nvim_win_is_valid(session.sidebar_winid) then
+  if is_visible(session) then
     vim.api.nvim_win_close(session.sidebar_winid, true)
   end
 
@@ -286,7 +360,7 @@ end
 ---Toggle sidebar visibility
 ---@param session StagedSession
 function M.toggle(session)
-  if session.visible then
+  if is_visible(session) then
     M.hide(session)
   else
     M.show(session)
@@ -304,7 +378,7 @@ function M.goto_comment(session)
   end
 
   local entry = data[cursor_line]
-  if not entry.line_nr or not entry.file_path then
+  if not entry.comment_id or not entry.file_path then
     return
   end
 
@@ -314,16 +388,27 @@ function M.goto_comment(session)
     return
   end
 
-  -- Find the window showing this buffer
+  local comment = file_state.comments[entry.comment_id]
+  if not comment then
+    return
+  end
+  local line = position.get_current_lines(session, file_state, comment)
+
+  if not vim.api.nvim_tabpage_is_valid(session.tabpage) then
+    return
+  end
+
   local wins = vim.api.nvim_tabpage_list_wins(session.tabpage)
   for _, win in ipairs(wins) do
     local buf = vim.api.nvim_win_get_buf(win)
     if buf == file_state.bufnr then
       vim.api.nvim_set_current_win(win)
-      vim.api.nvim_win_set_cursor(win, { entry.line_nr, 0 })
+      vim.api.nvim_win_set_cursor(win, { line, 0 })
       return
     end
   end
+
+  vim.notify('Comment file is not open in this codediff', vim.log.levels.INFO)
 end
 
 ---Edit comment under cursor
@@ -353,10 +438,13 @@ function M.edit_comment(session)
 
   local input = require('staged.ui.input')
   input.open({ title = 'Edit Comment', initial_text = comment.text }, function(text)
-    if text then
-      comments.edit(entry.comment_id, text)
+    if
+      text
+      and comment_is_active(session, file_state, comment)
+      and comments.edit(entry.comment_id, text, session)
+      and session_is_active(session)
+    then
       M.render(session)
-      require('staged.ui.inline').render(session)
     end
   end)
 end
@@ -376,15 +464,26 @@ function M.delete_comment(session)
     return
   end
 
-  comments.delete(entry.comment_id)
-  M.render(session)
-  require('staged.ui.inline').render(session)
+  if
+    session_is_active(session)
+    and comments.delete(entry.comment_id, session)
+    and session_is_active(session)
+  then
+    M.render(session)
+    if entry.file_path == session.current_file then
+      require('staged.ui.inline').render(session)
+    end
+  end
 end
 
 ---Auto-show sidebar if configured and this is first comment
 ---@param session StagedSession
 function M.maybe_auto_show(session)
-  if config.options.sidebar.auto_show and comments.count() == 1 and not session.visible then
+  if
+    config.options.sidebar.auto_show
+    and state.total_comment_count(session) == 1
+    and not is_visible(session)
+  then
     M.show(session)
   end
 end

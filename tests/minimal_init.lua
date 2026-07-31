@@ -7,11 +7,11 @@ vim.opt.rtp:prepend(plugin_dir)
 
 -- Add plenary
 local plenary_dir = vim.fn.stdpath('data') .. '/lazy/plenary.nvim'
+if vim.fn.isdirectory(plenary_dir) == 0 then
+  error('plenary.nvim not found at ' .. plenary_dir)
+end
 vim.opt.rtp:prepend(plenary_dir)
 
--- Add codediff
-local codediff_dir = vim.fn.stdpath('data') .. '/lazy/codediff.nvim'
-vim.opt.rtp:prepend(codediff_dir)
-
 -- Load plugin
+vim.cmd('runtime plugin/staged.lua')
 require('staged').setup()

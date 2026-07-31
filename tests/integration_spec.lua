@@ -31,7 +31,7 @@ describe('integration', function()
       helpers.add_comment(3, 5, 'Function comment')
       inline.render(session)
 
-      local signs = helpers.get_signs(test_buf, 'staged')
+      local signs = helpers.get_signs(test_buf, session)
       assert.equals(1, #signs)
       assert.equals(3, signs[1].lnum)
     end)
@@ -41,7 +41,7 @@ describe('integration', function()
       inline.render(session)
       inline.clear(session)
 
-      local signs = helpers.get_signs(test_buf, 'staged')
+      local signs = helpers.get_signs(test_buf, session)
       assert.equals(0, #signs)
     end)
 
@@ -50,8 +50,25 @@ describe('integration', function()
       helpers.add_comment(7, 7, 'Second')
       inline.render(session)
 
-      local signs = helpers.get_signs(test_buf, 'staged')
+      local signs = helpers.get_signs(test_buf, session)
       assert.equals(2, #signs)
+    end)
+
+    it('should aggregate virtual text comments on the same line', function()
+      local config = require('staged.config')
+      local original_style = config.options.inline.style
+      config.options.inline.style = 'virtual_text'
+
+      helpers.add_comment(3, 3, 'First')
+      helpers.add_comment(3, 5, 'Second')
+      inline.render(session)
+
+      local marks =
+        vim.api.nvim_buf_get_extmarks(test_buf, session.indicator_ns_id, 0, -1, { details = true })
+      assert.equals(1, #marks)
+      assert.equals('[2 comment(s)]', marks[1][4].virt_text[1][1])
+
+      config.options.inline.style = original_style
     end)
 
     it('should clamp indicators when the file buffer changes', function()
@@ -68,11 +85,75 @@ describe('integration', function()
         inline.render(session)
       end)
 
-      local signs = helpers.get_signs(shorter_buf, 'staged')
+      local signs = helpers.get_signs(shorter_buf, session)
       assert.equals(1, #signs)
       assert.equals(2, signs[1].lnum)
 
       vim.api.nvim_buf_delete(shorter_buf, { force = true })
+    end)
+
+    it('should clear indicators from every file', function()
+      helpers.add_comment(3, 3, 'First file')
+      inline.render(session)
+
+      local second_buf = helpers.create_test_buffer(helpers.default_lines)
+      state.set_current_file(session, '/test/second.lua', second_buf)
+      helpers.add_comment(4, 4, 'Second file')
+      inline.render(session)
+      inline.render(session, '/test/example.lua')
+
+      assert.equals(1, helpers.count_extmarks(test_buf, session.indicator_ns_id))
+      assert.equals(1, helpers.count_extmarks(second_buf, session.indicator_ns_id))
+
+      require('staged').clear_all()
+
+      assert.equals(0, helpers.count_extmarks(test_buf, session.indicator_ns_id))
+      assert.equals(0, helpers.count_extmarks(second_buf, session.indicator_ns_id))
+
+      state.set_current_file(session, '/test/example.lua', test_buf)
+      vim.api.nvim_buf_delete(second_buf, { force = true })
+    end)
+
+    it('should refresh line highlights after an edit inside a comment range', function()
+      local config = require('staged.config')
+      local original_style = config.options.inline.style
+      config.options.inline.style = 'line_highlight'
+
+      helpers.add_comment(3, 5, 'Range comment')
+      inline.render(session)
+      vim.api.nvim_buf_set_text(test_buf, 3, 0, 3, 0, { '-- inserted', '' })
+      vim.api.nvim_exec_autocmds('TextChanged', { buffer = test_buf, modeline = false })
+
+      assert.is_true(vim.wait(500, function()
+        return helpers.count_extmarks(test_buf, session.indicator_ns_id) == 4
+      end))
+
+      config.options.inline.style = original_style
+    end)
+
+    it('should reaggregate indicators when comment positions collapse', function()
+      local config = require('staged.config')
+      local original_style = config.options.inline.style
+      config.options.inline.style = 'virtual_text'
+
+      helpers.add_comment(3, 3, 'First')
+      helpers.add_comment(4, 4, 'Second')
+      inline.render(session)
+      vim.api.nvim_buf_set_lines(test_buf, 2, 3, false, {})
+      vim.api.nvim_exec_autocmds('TextChanged', { buffer = test_buf, modeline = false })
+
+      assert.is_true(vim.wait(500, function()
+        local marks = vim.api.nvim_buf_get_extmarks(
+          test_buf,
+          session.indicator_ns_id,
+          0,
+          -1,
+          { details = true }
+        )
+        return #marks == 1 and marks[1][4].virt_text[1][1] == '[2 comment(s)]'
+      end))
+
+      config.options.inline.style = original_style
     end)
   end)
 
@@ -94,6 +175,19 @@ describe('integration', function()
 
       sidebar.toggle(session)
       assert.is_false(session.visible)
+    end)
+
+    it('should recover after its window is closed externally', function()
+      sidebar.show(session)
+      vim.api.nvim_win_close(session.sidebar_winid, true)
+
+      assert.is_true(vim.wait(500, function()
+        return not session.visible and session.sidebar_bufnr == nil
+      end))
+
+      sidebar.show(session)
+      assert.is_true(vim.api.nvim_win_is_valid(session.sidebar_winid))
+      sidebar.hide(session)
     end)
 
     it('should render comments', function()
@@ -121,6 +215,58 @@ describe('integration', function()
 
       sidebar.hide(session)
       config.options.sidebar.auto_show = original
+    end)
+
+    it('should ignore delayed edits after the session closes', function()
+      local comment = helpers.add_comment(3, 3, 'original')
+      sidebar.show(session)
+      local lines = helpers.get_buffer_lines(session.sidebar_bufnr)
+      local comment_line
+      for line, text in ipairs(lines) do
+        if text:find('original', 1, true) then
+          comment_line = line
+          break
+        end
+      end
+      vim.api.nvim_set_current_win(session.sidebar_winid)
+      vim.api.nvim_win_set_cursor(0, { comment_line, 0 })
+
+      local input = require('staged.ui.input')
+      local original_open = input.open
+      local submit
+      input.open = function(_, callback)
+        submit = callback
+      end
+      sidebar.edit_comment(session)
+      state.destroy_session(session.tabpage)
+      submit('late edit')
+      input.open = original_open
+
+      assert.equals('original', comment.text)
+    end)
+
+    it('should resolve the current line when jumping from stale sidebar content', function()
+      helpers.add_comment(3, 3, 'Moving comment')
+      sidebar.show(session)
+
+      local sidebar_lines = helpers.get_buffer_lines(session.sidebar_bufnr)
+      local comment_line
+      for line, text in ipairs(sidebar_lines) do
+        if text:find('Moving comment', 1, true) then
+          comment_line = line
+          break
+        end
+      end
+      assert.is_not_nil(comment_line)
+
+      vim.api.nvim_set_current_win(session.sidebar_winid)
+      vim.api.nvim_win_set_cursor(0, { comment_line, 0 })
+      vim.api.nvim_buf_set_text(test_buf, 2, 0, 2, 0, { '-- inserted', '' })
+      sidebar.goto_comment(session)
+
+      assert.equals(test_buf, vim.api.nvim_get_current_buf())
+      assert.equals(4, vim.api.nvim_win_get_cursor(0)[1])
+      sidebar.hide(session)
     end)
   end)
 
@@ -166,8 +312,10 @@ describe('integration', function()
     it('should export to buffer', function()
       helpers.add_comment(3, 3, 'Buffer test')
 
+      local session_tabpage = vim.api.nvim_get_current_tabpage()
       local buf_count_before = #vim.api.nvim_list_bufs()
       export.to_buffer()
+      local export_tabpage = vim.api.nvim_get_current_tabpage()
       local buf_count_after = #vim.api.nvim_list_bufs()
 
       -- Should have created a new buffer
@@ -181,6 +329,13 @@ describe('integration', function()
           vim.api.nvim_buf_delete(buf, { force = true })
           break
         end
+      end
+
+      vim.api.nvim_set_current_tabpage(session_tabpage)
+      if vim.api.nvim_tabpage_is_valid(export_tabpage) then
+        vim.api.nvim_set_current_tabpage(export_tabpage)
+        vim.cmd('tabclose!')
+        vim.api.nvim_set_current_tabpage(session_tabpage)
       end
     end)
   end)
@@ -208,6 +363,22 @@ describe('integration', function()
       assert.equals(7, start_line)
     end)
 
+    it('should stay attached when a line is inserted at its boundaries', function()
+      local c = helpers.add_comment(3, 3, 'Moving comment')
+      local file_state = state.get_current_file_state(session)
+
+      vim.api.nvim_buf_set_text(test_buf, 2, 0, 2, 0, { '-- before', '' })
+      local start_line, end_line = position.get_current_lines(session, file_state, c)
+      assert.equals(4, start_line)
+      assert.equals(4, end_line)
+
+      local line = vim.api.nvim_buf_get_lines(test_buf, 3, 4, false)[1]
+      vim.api.nvim_buf_set_text(test_buf, 3, #line, 3, #line, { '', '-- after' })
+      start_line, end_line = position.get_current_lines(session, file_state, c)
+      assert.equals(4, start_line)
+      assert.equals(4, end_line)
+    end)
+
     it('should update position when lines deleted above', function()
       local c = helpers.add_comment(5, 5, 'Moving comment')
 
@@ -218,6 +389,22 @@ describe('integration', function()
       local start_line, _ = position.get_current_lines(session, file_state, c)
       -- Comment should have moved up by 2 lines
       assert.equals(3, start_line)
+    end)
+
+    it('should migrate tracking when a file gets a replacement buffer', function()
+      local c = helpers.add_comment(5, 5, 'Moving comment')
+      local replacement = helpers.create_test_buffer(helpers.default_lines)
+
+      state.set_current_file(session, '/test/example.lua', replacement)
+      vim.api.nvim_buf_set_lines(replacement, 0, 0, false, { '-- new line' })
+
+      local file_state = state.get_current_file_state(session)
+      local start_line = position.get_current_lines(session, file_state, c)
+      assert.equals(6, start_line)
+      assert.equals(0, helpers.count_extmarks(test_buf, session.ns_id))
+      assert.equals(1, helpers.count_extmarks(replacement, session.ns_id))
+
+      vim.api.nvim_buf_delete(replacement, { force = true })
     end)
   end)
 
@@ -292,13 +479,18 @@ describe('integration', function()
   describe('session lifecycle', function()
     it('should clean up extmarks on destroy', function()
       helpers.add_comment(3, 3, 'Comment')
+      inline.render(session)
       local extmark_count = helpers.count_extmarks(test_buf, session.ns_id)
+      local indicator_count = helpers.count_extmarks(test_buf, session.indicator_ns_id)
       assert.is_true(extmark_count > 0)
+      assert.is_true(indicator_count > 0)
 
       helpers.cleanup_session()
 
       extmark_count = helpers.count_extmarks(test_buf, session.ns_id)
+      indicator_count = helpers.count_extmarks(test_buf, session.indicator_ns_id)
       assert.equals(0, extmark_count)
+      assert.equals(0, indicator_count)
 
       -- Recreate session for after_each cleanup
       session = helpers.create_mock_session(test_buf, '/test/example.lua')
@@ -315,6 +507,93 @@ describe('integration', function()
 
       -- Recreate session for after_each cleanup
       session = helpers.create_mock_session(test_buf, '/test/example.lua')
+    end)
+
+    it('should restore an existing buffer-local keymap on destroy', function()
+      local original = function() end
+      vim.keymap.set('n', ']m', original, {
+        buffer = test_buf,
+        desc = 'Original mapping',
+        silent = true,
+      })
+
+      require('staged').bind_session_keymaps(session.tabpage)
+      local staged_mapping = vim.api.nvim_buf_call(test_buf, function()
+        return vim.fn.maparg(']m', 'n', false, true)
+      end)
+      assert.equals('Next staged comment', staged_mapping.desc)
+
+      helpers.cleanup_session()
+      local restored = vim.api.nvim_buf_call(test_buf, function()
+        return vim.fn.maparg(']m', 'n', false, true)
+      end)
+      assert.equals(original, restored.callback)
+      assert.equals('Original mapping', restored.desc)
+      assert.equals(1, restored.silent)
+
+      session = helpers.create_mock_session(test_buf, '/test/example.lua')
+    end)
+
+    it('should preserve a keymap replaced while the session is active', function()
+      require('staged').bind_session_keymaps(session.tabpage)
+      local replacement = function() end
+      vim.keymap.set('n', ']m', replacement, {
+        buffer = test_buf,
+        desc = 'Replacement mapping',
+      })
+
+      helpers.cleanup_session()
+      local mapping = vim.api.nvim_buf_call(test_buf, function()
+        return vim.fn.maparg(']m', 'n', false, true)
+      end)
+      assert.equals(replacement, mapping.callback)
+      assert.equals('Replacement mapping', mapping.desc)
+
+      session = helpers.create_mock_session(test_buf, '/test/example.lua')
+    end)
+
+    it('should not let new history mappings override customized legacy actions', function()
+      local config = require('staged.config')
+      local original_edit = config.options.keymaps.edit
+      local original_delete = config.options.keymaps.delete
+      config.options.keymaps.edit = '<Char-117>'
+      config.options.keymaps.delete = 'r'
+
+      require('staged').bind_session_keymaps(session.tabpage)
+
+      local edit = vim.api.nvim_buf_call(test_buf, function()
+        return vim.fn.maparg('<leader>cu', 'n', false, true)
+      end)
+      local delete = vim.api.nvim_buf_call(test_buf, function()
+        return vim.fn.maparg('<leader>cr', 'n', false, true)
+      end)
+      config.options.keymaps.edit = original_edit
+      config.options.keymaps.delete = original_delete
+
+      assert.equals('Edit staged comment', edit.desc)
+      assert.equals('Delete staged comment', delete.desc)
+    end)
+
+    it('should not let sidebar history mappings override customized legacy actions', function()
+      local config = require('staged.config')
+      local original_clipboard = config.options.keymaps.export_clipboard
+      local original_buffer = config.options.keymaps.export_buffer
+      config.options.keymaps.export_clipboard = '<Char-117>'
+      config.options.keymaps.export_buffer = 'r'
+
+      sidebar.show(session)
+
+      local clipboard = vim.api.nvim_buf_call(session.sidebar_bufnr, function()
+        return vim.fn.maparg('<leader>cu', 'n', false, true)
+      end)
+      local buffer = vim.api.nvim_buf_call(session.sidebar_bufnr, function()
+        return vim.fn.maparg('<leader>cr', 'n', false, true)
+      end)
+      config.options.keymaps.export_clipboard = original_clipboard
+      config.options.keymaps.export_buffer = original_buffer
+
+      assert.equals('Export to clipboard', clipboard.desc)
+      assert.equals('Export to buffer', buffer.desc)
     end)
   end)
 
@@ -346,7 +625,7 @@ describe('integration', function()
 
       -- Render indicators
       inline.render(session)
-      local signs = helpers.get_signs(test_buf, 'staged')
+      local signs = helpers.get_signs(test_buf, session)
       assert.equals(3, #signs)
 
       -- Show sidebar

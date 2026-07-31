@@ -88,7 +88,7 @@ describe('inline styles', function()
     helpers.add_comment(3, 3, 'Sign comment')
     inline.render(session)
 
-    local signs = helpers.get_signs(test_buf, 'staged')
+    local signs = helpers.get_signs(test_buf, session)
     assert.equals(1, #signs)
   end)
 
@@ -98,8 +98,9 @@ describe('inline styles', function()
     inline.render(session)
 
     -- Virtual text uses extmarks in the indicators namespace
-    local marks =
-      vim.api.nvim_buf_get_extmarks(test_buf, highlights.ns_indicators, 0, -1, { details = true })
+    local marks = vim.api.nvim_buf_get_extmarks(test_buf, session.indicator_ns_id, 0, -1, {
+      details = true,
+    })
     assert.equals(1, #marks)
     assert.is_not_nil(marks[1][4].virt_text)
   end)
@@ -110,8 +111,9 @@ describe('inline styles', function()
     inline.render(session)
 
     -- Line highlight uses extmarks with line_hl_group
-    local marks =
-      vim.api.nvim_buf_get_extmarks(test_buf, highlights.ns_indicators, 0, -1, { details = true })
+    local marks = vim.api.nvim_buf_get_extmarks(test_buf, session.indicator_ns_id, 0, -1, {
+      details = true,
+    })
     -- Should have 3 marks for lines 3, 4, 5
     assert.equals(3, #marks)
   end)
@@ -126,7 +128,7 @@ describe('inline styles', function()
     helpers.add_comment(3, 3, 'Custom icon')
     inline.render(session)
 
-    local signs = helpers.get_signs(test_buf, 'staged')
+    local signs = helpers.get_signs(test_buf, session)
     assert.equals(1, #signs)
   end)
 end)
