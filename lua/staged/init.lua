@@ -4,6 +4,9 @@ local config = require('staged.config')
 
 ---@param opts? table
 function M.setup(opts)
+  if vim.fn.has('nvim-0.12.5') == 0 then
+    error('staged.nvim requires Neovim 0.12.5 or newer')
+  end
   config.setup(opts)
 
   local state = require('staged.core.state')

@@ -4,6 +4,10 @@ local state = require('staged.core.state')
 local config = require('staged.config')
 local position = require('staged.core.position')
 
+local function extmark_priority()
+  return config.options.inline.priority
+end
+
 ---@param bufnr integer
 ---@return integer|nil
 local function get_line_count(bufnr)
@@ -120,6 +124,7 @@ function M.render_sign(session, file_state, line)
   vim.api.nvim_buf_set_extmark(file_state.bufnr, session.indicator_ns_id, line - 1, 0, {
     sign_text = config.options.inline.sign_icon,
     sign_hl_group = 'StagedCommentSign',
+    priority = extmark_priority(),
   })
 end
 
@@ -134,6 +139,7 @@ function M.render_virtual_text(session, file_state, line, count)
   vim.api.nvim_buf_set_extmark(file_state.bufnr, session.indicator_ns_id, line - 1, 0, {
     virt_text = { { text, 'StagedCommentVirtText' } },
     virt_text_pos = 'eol',
+    priority = extmark_priority(),
   })
 end
 
@@ -143,6 +149,7 @@ end
 function M.render_line_highlight(session, file_state, line)
   vim.api.nvim_buf_set_extmark(file_state.bufnr, session.indicator_ns_id, line - 1, 0, {
     line_hl_group = 'StagedCommentLine',
+    priority = extmark_priority(),
   })
 end
 

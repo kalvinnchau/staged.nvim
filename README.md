@@ -6,7 +6,7 @@ comments live on the modified side, track line positions, and disappear when the
 
 ## requirements
 
-- neovim >= 0.10.0
+- neovim >= 0.12.5
 - [codediff.nvim](https://github.com/esmuellert/codediff.nvim)
 - optionally, a clipboard provider for clipboard exports (`:checkhealth provider`)
 
@@ -56,6 +56,7 @@ comments live on the modified side, track line positions, and disappear when the
     inline = {
       style = 'sign',                         -- 'sign', 'virtual_text', 'line_highlight'
       sign_icon = '>>',                       -- sign column icon
+      priority = 150,                         -- indicator priority (0–65535)
       virtual_text_format = '[%d comment(s)]', -- string.format pattern
     },
     input = {
@@ -90,6 +91,8 @@ in sidebar:
 - `e` - edit comment
 - `d` - delete comment
 - `q` - close sidebar
+
+The floating input grows with wrapped/multiline content and stays within the editor viewport.
 
 in the floating input window:
 

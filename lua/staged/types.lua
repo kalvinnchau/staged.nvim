@@ -95,6 +95,7 @@
 ---@field style 'sign'|'virtual_text'|'line_highlight' Indicator style
 ---@field sign_icon string Icon for sign column
 ---@field virtual_text_format string Format string for virtual text
+---@field priority integer Extmark priority for inline decorations (0..65535, default 150)
 
 ---@class StagedInputConfig
 ---@field style 'floating'|'inline' Input window style

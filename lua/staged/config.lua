@@ -30,6 +30,8 @@ M.defaults = {
     style = 'sign',
     sign_icon = '>>',
     virtual_text_format = '[%d comment(s)]',
+    -- Below codediff's moved-block priority (250) so indicators never win over it
+    priority = 150,
   },
   input = {
     style = 'floating',
@@ -74,6 +76,14 @@ end
 
 ---@param name string
 ---@param value any
+local function validate_priority(name, value)
+  if type(value) ~= 'number' or value % 1 ~= 0 or value < 0 or value > 65535 then
+    error(string.format('staged.nvim: %s must be an integer between 0 and 65535', name), 3)
+  end
+end
+
+---@param name string
+---@param value any
 local function validate_boolean(name, value)
   if type(value) ~= 'boolean' then
     error(string.format('staged.nvim: %s must be a boolean', name), 3)
@@ -107,6 +117,8 @@ local function validate(options)
   for name in pairs(M.defaults.keymaps) do
     validate_string('keymaps.' .. name, options.keymaps[name], name == 'prefix')
   end
+
+  validate_priority('inline.priority', options.inline.priority)
 
   validate_string('inline.sign_icon', options.inline.sign_icon)
   if vim.fn.strdisplaywidth(options.inline.sign_icon) > 2 then
