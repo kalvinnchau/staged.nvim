@@ -294,6 +294,33 @@ describe('codediff integration', function()
     assert.not_equals('Next staged comment', mapping.desc)
   end)
 
+  it('restores script-local codediff mappings when switching files', function()
+    local modified_bufnr = create_buffer()
+    local script = vim.fn.tempname()
+    vim.fn.writefile({
+      'function! s:PreviousMapping()',
+      'endfunction',
+      'nnoremap <script> <buffer> ]m <SID>PreviousMapping',
+    }, script)
+    vim.api.nvim_buf_call(modified_bufnr, function()
+      vim.cmd('source ' .. vim.fn.fnameescape(script))
+    end)
+    vim.fn.delete(script)
+
+    local previous = vim.api.nvim_buf_call(modified_bufnr, function()
+      return vim.fn.maparg(']m', 'n', false, true)
+    end)
+    local session = state.create_session(tabpage)
+    state.set_keymap(session, modified_bufnr, 'n', ']m', function() end)
+
+    state.clear_keymaps(session, modified_bufnr)
+
+    local restored = vim.api.nvim_buf_call(modified_bufnr, function()
+      return vim.fn.maparg(']m', 'n', false, true)
+    end)
+    assert.equals('<SNR>' .. previous.sid .. '_PreviousMapping', restored.rhs)
+  end)
+
   it('removes sessions whose tab handles became invalid', function()
     config.options.activation.mode = 'manual'
     reload_integration()
