@@ -26,6 +26,7 @@ function M.setup(opts)
   end
 
   M.setup_keymaps()
+  require('staged.integration.explorer').setup()
 
   vim.schedule(function()
     if not codediff.is_available() or not codediff.is_in_codediff() then

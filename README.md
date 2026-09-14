@@ -133,6 +133,25 @@ JSON schema 2 replaces schema 1, adding modified-side revision metadata. Paths a
 to the codediff session root and omitted for files outside it. Positions and snippets survive
 buffer unloads and reloads, including undo/redo anchors.
 
+## explorer comment counts (opt-in)
+
+Once both plugins are on the runtime path, add wrappers to **codediff's** setup options:
+
+```lua
+require('codediff').setup({
+  -- Keep your other codediff options here.
+  explorer = { formatters = require('staged.integration.explorer').formatters() },
+})
+```
+
+File, folder, and group rows show `comments:N`, with revision-aware counts refreshed on
+comment changes, undo/redo, and explorer redraws. Existing callbacks can be wrapped with
+`formatters({ file = my_file_formatter, folder = my_folder_formatter, group = my_group_formatter })`.
+
+Upstream row contexts lack a tab handle. Controlled redraws supply it; otherwise counts
+are omitted unless the active buffer identifies the explorer. Advanced callers may supply
+`tabpage` or `resolve_tabpage(ctx)`—never assume a background render belongs to the current tab.
+
 ## events
 
 comment mutations emit `User` events:
