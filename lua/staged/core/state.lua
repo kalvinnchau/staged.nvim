@@ -90,6 +90,9 @@ local function restore_keymap(bufnr, mode, lhs, mapping)
   if not rhs then
     return
   end
+  if type(rhs) == 'string' and mapping.sid and mapping.sid > 0 then
+    rhs = rhs:gsub('<[sS][iI][dD]>', '<SNR>' .. mapping.sid .. '_')
+  end
 
   pcall(vim.keymap.set, mapping.mode or mode, lhs, rhs, {
     buffer = bufnr,
