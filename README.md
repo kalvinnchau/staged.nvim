@@ -165,29 +165,32 @@ comment mutations emit `User` events:
 Event data includes the tabpage, action, and total comment count. Comment events also include
 `comment_id`, `file_path`, and a comment snapshot without internal extmark state.
 
-## health
+## health and development
 
-Run `:checkhealth staged` to verify Neovim, configuration, codediff lifecycle accessors, the
-current codediff session, and optional clipboard support.
+Run `:checkhealth staged` to check versions, configuration, codediff accessors/session,
+and optional clipboard support.
 
-## development
-
-requires neovim, [plenary.nvim](https://github.com/nvim-lua/plenary.nvim), and
-[mise](https://mise.jdx.dev/) for tool management. the test config expects plenary.nvim at
-`stdpath('data')/lazy/plenary.nvim`.
+Development uses [mise](https://mise.jdx.dev/) and
+[plenary.nvim](https://github.com/nvim-lua/plenary.nvim), installed at `stdpath('data')/lazy/plenary.nvim`.
 
 ```bash
-mise install          # install neovim, just, stylua
-just fmt              # format code
-just test             # run tests
-just lint             # check formatting
+mise install
+just fmt         # format Lua
+just check       # lint + unit + real-codediff tests
+just test        # unit tests only
+just test-real   # real-codediff tests only
+just lint        # formatting check only
 ```
 
-manual testing:
+The real suite needs codediff and its matching native library already installed at
+`stdpath('data')/lazy/codediff.nvim`; it never downloads dependencies. That suite accepts
+`STAGED_CODEDIFF_PATH` and `STAGED_PLENARY_PATH` overrides. Disposable fixtures live under
+`.review/`; Git tests clone local HEAD and modify only fixture files/index, without commits.
+This Lua project has no native build or sanitizer target.
 
 ```bash
-nvim -u config/with_codediff.lua   # test with codediff integration
-nvim -u config/init.lua            # test plugin only
+mise x -- nvim -u config/with_codediff.lua  # isolated manual test; leader is comma
+mise x -- nvim -u config/init.lua          # plugin-only sandbox
 ```
 
 ## license
