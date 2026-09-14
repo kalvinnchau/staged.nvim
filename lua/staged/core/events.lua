@@ -53,6 +53,7 @@ function M.comment_data(comment, start_line, end_line)
   return {
     id = comment.id,
     file_path = comment.file_path,
+    modified_revision = comment.modified_revision,
     start_line = start_line or comment.start_line,
     end_line = end_line or comment.end_line,
     text = comment.text,

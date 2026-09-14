@@ -4,10 +4,13 @@ ephemeral comments for [codediff.nvim](https://github.com/esmuellert/codediff.nv
 
 comments live on the modified side, track line positions, and disappear when the tab closes.
 
+Working-tree, index, and commit-revision comments are separate, even for the same path.
+Changing only the base revision retains the same comments.
+
 ## requirements
 
 - neovim >= 0.12.5
-- [codediff.nvim](https://github.com/esmuellert/codediff.nvim)
+- [codediff.nvim](https://github.com/esmuellert/codediff.nvim) >= 4.0.5, < 5.0.0
 - optionally, a clipboard provider for clipboard exports (`:checkhealth provider`)
 
 ## install
@@ -16,7 +19,7 @@ comments live on the modified side, track line positions, and disappear when the
 -- lazy.nvim
 {
   'kalvinnchau/staged.nvim',
-  dependencies = { 'esmuellert/codediff.nvim' },
+  dependencies = { { 'esmuellert/codediff.nvim', version = '^4.0.5' } },
   opts = {},
 }
 ```
@@ -27,7 +30,7 @@ comments live on the modified side, track line positions, and disappear when the
 -- lazy.nvim
 {
   'kalvinnchau/staged.nvim',
-  dependencies = { 'esmuellert/codediff.nvim' },
+  dependencies = { { 'esmuellert/codediff.nvim', version = '^4.0.5' } },
   opts = {
     activation = {
       mode = 'auto', -- 'auto' or 'manual' session creation
@@ -87,7 +90,7 @@ in codediff modified buffer:
 
 in sidebar:
 
-- `<CR>` - jump to comment
+- `<CR>` - reopen the comparison and jump to the comment
 - `e` - edit comment
 - `d` - delete comment
 - `q` - close sidebar
@@ -123,10 +126,12 @@ outputs markdown, plain text, or versioned JSON with optional code snippets:
 ```
 
 ```json
-{"schema_version":1,"comments":[{"path":"lua/example.lua","start_line":10,"end_line":10,"text":"needs error handling"}]}
+{"comments":[{"end_line":10,"modified_revision":"WORKING","path":"lua/example.lua","side":"modified","start_line":10,"text":"needs error handling"}],"schema_version":2}
 ```
 
-JSON paths are relative to the codediff session root and omitted for files outside it.
+JSON schema 2 replaces schema 1, adding modified-side revision metadata. Paths are relative
+to the codediff session root and omitted for files outside it. Positions and snippets survive
+buffer unloads and reloads, including undo/redo anchors.
 
 ## events
 

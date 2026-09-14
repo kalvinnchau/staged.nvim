@@ -1,5 +1,17 @@
 local M = {}
 
+local WORKING = 'WORKING'
+
+---Canonical revision string (nil/empty collapse to WORKING)
+---@param revision? string
+---@return string
+function M.normalize_revision(revision)
+  if revision == nil or revision == '' or revision == WORKING then
+    return WORKING
+  end
+  return revision
+end
+
 ---@type table<integer, StagedSession> Sessions indexed by tabpage ID
 local sessions = {}
 
@@ -189,34 +201,67 @@ function M.clear_keymaps(session, bufnr)
   end
 end
 
+---Compute the internal file-state key for a review identity.
+---Keyed by path + modified revision only (NUL-delimited to avoid collisions
+---with real '#' filenames); the working tree always keeps the bare path.
+---@param file_path string Absolute modified-side path
+---@param context? StagedReviewContext Review context carrying revisions
+---@return string
+function M.file_key(file_path, context)
+  local modified = M.normalize_revision(context and context.modified_revision)
+  if modified == WORKING then
+    return file_path
+  end
+  return file_path .. '\0' .. modified
+end
+
+---Deactivate the current modified side while retaining its review comments.
+---@param session StagedSession
+function M.deactivate_current_file(session)
+  local file_state = M.get_current_file_state(session)
+  if file_state then
+    M.clear_keymaps(session, file_state.bufnr)
+    if vim.api.nvim_buf_is_valid(file_state.bufnr) then
+      vim.api.nvim_buf_clear_namespace(file_state.bufnr, session.indicator_ns_id, 0, -1)
+    end
+  end
+  session.current_file = nil
+end
+
 ---Set the current file for a session, creating file state if needed
 ---@param session StagedSession
 ---@param file_path string
 ---@param bufnr integer
-function M.set_current_file(session, file_path, bufnr)
-  local previous_path = session.current_file
-  local previous_state = previous_path and session.files[previous_path] or nil
+---@param context? StagedReviewContext Review context (modified_revision, original_revision)
+function M.set_current_file(session, file_path, bufnr, context)
+  local key = M.file_key(file_path, context)
+  local previous_key = session.current_file
+  local previous_state = previous_key and session.files[previous_key] or nil
 
-  if previous_state and (previous_path ~= file_path or previous_state.bufnr ~= bufnr) then
-    M.clear_keymaps(session, previous_state.bufnr)
-    if vim.api.nvim_buf_is_valid(previous_state.bufnr) then
-      vim.api.nvim_buf_clear_namespace(previous_state.bufnr, session.indicator_ns_id, 0, -1)
-    end
+  if previous_state and (previous_key ~= key or previous_state.bufnr ~= bufnr) then
+    M.deactivate_current_file(session)
   end
 
-  session.current_file = file_path
+  session.current_file = key
 
-  if not session.files[file_path] then
+  local file_state = session.files[key]
+  if not file_state then
     ---@type StagedFileState
-    session.files[file_path] = {
+    file_state = {
       bufnr = bufnr,
       comments = {},
+      file_path = file_path,
+      modified_revision = M.normalize_revision(context and context.modified_revision),
+      original_revision = context and context.original_revision or nil,
     }
+    session.files[key] = file_state
     return
   end
 
-  local file_state = session.files[file_path]
-  if file_state.bufnr == bufnr then
+  if context then
+    file_state.original_revision = context.original_revision
+  end
+  if file_state.bufnr == bufnr and not file_state.needs_marks then
     return
   end
 
@@ -228,8 +273,9 @@ function M.set_current_file(session, file_path, bufnr)
     comment.end_line = end_line
   end
 
-  require('staged.core.history').migrate_anchors(session, file_path, file_state, bufnr)
+  require('staged.core.history').migrate_anchors(session, key, file_state, bufnr)
   file_state.bufnr = bufnr
+  file_state.needs_marks = not vim.api.nvim_buf_is_loaded(bufnr)
   for _, comment in pairs(file_state.comments) do
     comment.extmark_id = position.create_mark(session, file_state, comment)
   end
@@ -245,12 +291,12 @@ function M.get_current_file_state(session)
   return session.files[session.current_file]
 end
 
----Get file state by path
+---Get file state by internal key (see state.file_key)
 ---@param session StagedSession
----@param file_path string
+---@param key string Internal file-state key
 ---@return StagedFileState|nil
-function M.get_file_state(session, file_path)
-  return session.files[file_path]
+function M.get_file_state(session, key)
+  return session.files[key]
 end
 
 ---Get current buffer number
@@ -265,7 +311,8 @@ end
 ---@param session StagedSession
 ---@return string|nil
 function M.get_current_path(session)
-  return session.current_file
+  local file_state = M.get_current_file_state(session)
+  return file_state and file_state.file_path or nil
 end
 
 ---@param tabpage integer
@@ -321,6 +368,44 @@ function M.total_comment_count(session)
     end
   end
   return count
+end
+
+---Capture live comment positions and code snippets from a buffer that is
+---about to be unloaded/wiped, so exports and later undos survive the loss of
+---its extmarks. Dormant history anchors (comments absent from a file state,
+---e.g. after an undo) are folded into their saved start/end lines too.
+---Called by setup's unload/wipe hooks while the buffer is still readable.
+---@param session StagedSession
+---@param bufnr integer
+function M.capture_buffer(session, bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) or not vim.api.nvim_buf_is_loaded(bufnr) then
+    return
+  end
+  local position = require('staged.core.position')
+  local history = require('staged.core.history')
+
+  for _, file_state in pairs(session.files) do
+    if file_state.bufnr == bufnr then
+      file_state.needs_marks = true
+      for _, comment in pairs(file_state.comments) do
+        local start_line, end_line = position.get_current_lines(session, file_state, comment)
+        comment.start_line = start_line
+        comment.end_line = end_line
+        if vim.api.nvim_buf_is_loaded(bufnr) then
+          local ok, lines =
+            pcall(vim.api.nvim_buf_get_lines, bufnr, start_line - 1, end_line, false)
+          if ok and type(lines) == 'table' then
+            local snippet = table.concat(lines, '\n')
+            comment.code = snippet
+          end
+        end
+        position.delete_mark(session, file_state, comment)
+        comment.extmark_id = nil
+      end
+
+      history.capture_anchors(session, file_state, bufnr)
+    end
+  end
 end
 
 return M

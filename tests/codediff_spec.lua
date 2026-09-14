@@ -92,15 +92,17 @@ describe('codediff integration', function()
   it('uses the modified directory explorer root', function()
     local modified_bufnr = create_buffer()
     codediff_session = {
-      explorer = {
-        dir2 = '/modified-root',
-      },
+      panel = { name = 'explorer' },
+      stored_diff_result = {},
     }
     lifecycle.get_buffers = function()
       return 1, modified_bufnr
     end
     lifecycle.get_paths = function()
       return '/original-root/nested/file.lua', '/modified-root/nested/file.lua'
+    end
+    lifecycle.get_panel_view = function()
+      return { dir2 = '/modified-root' }
     end
     reload_integration()
 
@@ -114,6 +116,7 @@ describe('codediff integration', function()
     codediff_session = {
       modified_bufnr = modified_bufnr,
       modified_path = '/repo/legacy.lua',
+      stored_diff_result = {},
     }
     reload_integration()
 

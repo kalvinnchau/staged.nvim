@@ -134,17 +134,6 @@ function M.try_bind_keymaps(buf)
   end
 
   buf = buf or vim.api.nvim_get_current_buf()
-  local buf_path = vim.api.nvim_buf_get_name(buf)
-
-  if session.current_file and buf_path == session.current_file then
-    local file_state = state.get_current_file_state(session)
-    if file_state and file_state.bufnr ~= buf then
-      state.set_current_file(session, session.current_file, buf)
-    end
-    bind_keymaps_to_buffer(session, buf)
-    return true
-  end
-
   local file_state = state.get_current_file_state(session)
   if file_state and buf == file_state.bufnr then
     bind_keymaps_to_buffer(session, buf)
@@ -185,11 +174,12 @@ function M.setup_keymaps()
     end,
   })
 
-  vim.api.nvim_create_autocmd('BufWipeout', {
+  vim.api.nvim_create_autocmd({ 'BufUnload', 'BufWipeout' }, {
     group = group,
     callback = function(args)
       local state = require('staged.core.state')
       for _, session in pairs(state.get_all_sessions()) do
+        state.capture_buffer(session, args.buf)
         state.clear_keymaps(session, args.buf)
       end
     end,
@@ -331,7 +321,8 @@ end
 ---@param comment StagedComment
 ---@return boolean
 local function comment_is_active(session, comment)
-  local file_state = session.files[comment.file_path]
+  local state = require('staged.core.state')
+  local file_state = session.files[state.file_key(comment.file_path, comment)]
   return session_is_active(session)
     and file_state ~= nil
     and file_state.comments[comment.id] == comment

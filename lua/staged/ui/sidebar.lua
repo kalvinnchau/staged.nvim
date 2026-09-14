@@ -10,7 +10,7 @@ local ns_highlights = vim.api.nvim_create_namespace('staged-sidebar-highlights')
 ---@class SidebarLine
 ---@field type 'file'|'range'|'comment'|'empty'
 ---@field comment_id? string
----@field file_path? string
+---@field file_key? string Internal file-state key (see state.file_key)
 
 ---@type table<integer, SidebarLine[]> Line metadata per sidebar buffer
 local line_data = {}
@@ -63,82 +63,101 @@ local function create_buffer(session)
   return buf
 end
 
----Find the codediff explorer window
+---Find a compatible visible left-side codediff panel (explorer/history) that the
+---sidebar can nest below. Read-only: codediff state is never touched.
 ---@param session StagedSession
----@return integer|nil winid
-local function find_explorer_window(session)
-  local codediff = require('staged.integration.codediff')
-  local codediff_session = codediff.get_codediff_session(session.tabpage)
-  if codediff_session and codediff_session.explorer and codediff_session.explorer.winid then
-    local winid = codediff_session.explorer.winid
-    if vim.api.nvim_win_is_valid(winid) then
-      return winid
-    end
+---@return integer|nil panel_win
+local function find_left_panel(session)
+  local view = require('staged.integration.codediff').get_panel_view(session.tabpage)
+  local winid = type(view) == 'table' and view.winid or nil
+  if not winid or not vim.api.nvim_win_is_valid(winid) then
+    return nil
   end
-  return nil
+  if view.is_hidden then
+    return nil
+  end
+
+  local ok, win_config = pcall(vim.api.nvim_win_get_config, winid)
+  if not ok then
+    return nil
+  end
+  -- Only a plain, currently visible left split is a compatible host; right and
+  -- bottom panels (and floats) fall back to a top-level side split.
+  if win_config.relative ~= '' or win_config.external then
+    return nil
+  end
+  if win_config.split ~= 'left' then
+    return nil
+  end
+  return winid
 end
 
----Create sidebar window
----@param session StagedSession
----@return integer winid
-local function create_window(session)
-  local pos = config.options.sidebar.position
-  local width = config.options.sidebar.width
-  local height = config.options.sidebar.height or 15
-
-  -- Save current window to restore later
-  local current_win = vim.api.nvim_get_current_win()
-
-  -- Try to split below the codediff explorer if position is 'left'
-  local explorer_win = nil
-  if pos == 'left' then
-    explorer_win = find_explorer_window(session)
-  end
-
-  if explorer_win then
-    -- Split below the explorer window
-    vim.api.nvim_set_current_win(explorer_win)
-    vim.cmd('belowright split')
-    local win = vim.api.nvim_get_current_win()
-    vim.api.nvim_win_set_height(win, height)
-
-    -- Set window options
-    vim.wo[win].number = false
-    vim.wo[win].relativenumber = false
-    vim.wo[win].signcolumn = 'no'
-    vim.wo[win].foldcolumn = '0'
-    vim.wo[win].wrap = true
-    vim.wo[win].winfixheight = true
-    vim.wo[win].cursorline = true
-
-    -- Return to original window
-    vim.api.nvim_set_current_win(current_win)
-    return win
-  end
-
-  -- Fallback: create vertical split
-  if pos == 'right' then
-    vim.cmd('botright vsplit')
+---Apply sidebar window options. Diff windows share scroll/cursor binding and
+---statuscolumn state; the sidebar must opt out of all of them so it never
+---disturbs diff scrolling.
+---@param win integer
+---@param vertical boolean True for a full-height side split, false for a row
+local function apply_window_options(win, vertical)
+  local wo = vim.wo[win]
+  wo.number = false
+  wo.relativenumber = false
+  wo.signcolumn = 'no'
+  wo.foldcolumn = '0'
+  wo.wrap = true
+  wo.spell = false
+  wo.cursorline = true
+  wo.scrollbind = false
+  wo.cursorbind = false
+  wo.statuscolumn = ''
+  if vertical then
+    wo.winfixwidth = true
   else
-    vim.cmd('topleft vsplit')
+    wo.winfixheight = true
   end
+end
 
-  local win = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_width(win, width)
-
-  -- Set window options
-  vim.wo[win].number = false
-  vim.wo[win].relativenumber = false
-  vim.wo[win].signcolumn = 'no'
-  vim.wo[win].foldcolumn = '0'
-  vim.wo[win].wrap = true
-  vim.wo[win].winfixwidth = true
-  vim.wo[win].cursorline = true
-
-  -- Return to original window
-  vim.api.nvim_set_current_win(current_win)
-
+---@param session StagedSession
+---@param buf integer
+---@return integer winid
+local function create_window(session, buf)
+  local pos = config.options.sidebar.position
+  local panel_win = pos == 'left' and find_left_panel(session) or nil
+  local opts
+  if panel_win then
+    opts = { split = 'below', win = panel_win, height = config.options.sidebar.height }
+  else
+    opts = { split = pos, win = -1, width = config.options.sidebar.width }
+  end
+  local win = vim.api.nvim_open_win(buf, false, opts)
+  apply_window_options(win, panel_win == nil)
   return win
+end
+
+---Real path for display, never the encoded file-state key
+---@param file_state StagedFileState|nil
+---@param fallback_key string
+---@return string
+local function display_name(file_state, fallback_key)
+  local path = file_state and file_state.file_path or nil
+  if type(path) ~= 'string' or path == '' then
+    path = fallback_key
+  end
+  local name = vim.fn.fnamemodify(path, ':~:.')
+  if name == '' then
+    name = '[buffer]'
+  end
+  return name
+end
+
+---Short revision suffix for a file header; empty for the working tree
+---@param file_state StagedFileState|nil
+---@return string display, string sort_key
+local function revision_label(file_state)
+  local rev = state.normalize_revision(file_state and file_state.modified_revision)
+  if rev == 'WORKING' then
+    return '', ''
+  end
+  return ' @' .. (rev:len() > 12 and rev:sub(1, 8) or rev), rev
 end
 
 ---Render sidebar contents
@@ -158,27 +177,42 @@ function M.render(session)
   table.insert(lines, string.format('Comments (%d):', state.total_comment_count(session)))
   table.insert(data, { type = 'empty' })
 
-  -- Sort file paths for consistent ordering
-  local file_paths = {}
-  for file_path in pairs(grouped) do
-    table.insert(file_paths, file_path)
+  -- Sort by display path (then revision) so real files group together even
+  -- when multiple review revisions of one path exist
+  local files = {}
+  for key in pairs(grouped) do
+    local file_state = state.get_file_state(session, key)
+    local label, revision = revision_label(file_state)
+    table.insert(files, {
+      key = key,
+      state = file_state,
+      name = display_name(file_state, key),
+      label = label,
+      revision = revision,
+    })
   end
-  table.sort(file_paths)
-
-  for _, file_path in ipairs(file_paths) do
-    local file_comments = grouped[file_path]
-    local file_state = state.get_file_state(session, file_path)
-
-    -- Filename header
-    local filename = vim.fn.fnamemodify(file_path, ':~:.')
-    if filename == '' then
-      filename = '[buffer]'
+  table.sort(files, function(a, b)
+    if a.name ~= b.name then
+      return a.name < b.name
     end
+    if a.revision ~= b.revision then
+      return a.revision < b.revision
+    end
+    return a.key < b.key
+  end)
+
+  for _, file in ipairs(files) do
+    local file_key, file_state = file.key, file.state
+    local file_comments = grouped[file_key]
+    local filename, label = file.name, file.label
     table.insert(lines, '')
     table.insert(data, { type = 'empty' })
-    table.insert(lines, ' ' .. filename .. ':')
+    table.insert(lines, ' ' .. filename .. label .. ':')
     table.insert(hl_ranges, { #lines, 1, #filename, 'StagedSidebarFile' })
-    table.insert(data, { type = 'file', file_path = file_path })
+    if label ~= '' then
+      table.insert(hl_ranges, { #lines, 1 + #filename, #label, 'StagedSidebarLineNr' })
+    end
+    table.insert(data, { type = 'file', file_key = file_key })
 
     for _, comment in ipairs(file_comments) do
       local start_line, end_line = comment.start_line, comment.end_line
@@ -208,7 +242,7 @@ function M.render(session)
           { #lines, 2 + #range_text + 2, #first_line, 'StagedSidebarComment' }
         )
       end
-      table.insert(data, { type = 'range', comment_id = comment.id, file_path = file_path })
+      table.insert(data, { type = 'range', comment_id = comment.id, file_key = file_key })
 
       -- Additional comment lines (indented to align with first line)
       local indent = string.rep(' ', 2 + #range_text + 2)
@@ -220,7 +254,7 @@ function M.render(session)
         table.insert(data, {
           type = 'comment',
           comment_id = comment.id,
-          file_path = file_path,
+          file_key = file_key,
         })
       end
     end
@@ -328,7 +362,7 @@ function M.show(session)
     M.setup_keymaps(session)
   end
 
-  session.sidebar_winid = create_window(session)
+  session.sidebar_winid = create_window(session, session.sidebar_bufnr)
   vim.api.nvim_win_set_buf(session.sidebar_winid, session.sidebar_bufnr)
 
   session.visible = true
@@ -352,7 +386,6 @@ function M.hide(session)
   if is_visible(session) then
     vim.api.nvim_win_close(session.sidebar_winid, true)
   end
-
   session.sidebar_winid = nil
   session.visible = false
 end
@@ -367,23 +400,70 @@ function M.toggle(session)
   end
 end
 
+---Resolve the sidebar entry under the cursor
+---@param session StagedSession
+---@return SidebarLine|nil
+local function entry_at_cursor(session)
+  if not session.sidebar_bufnr then
+    return nil
+  end
+  local data = line_data[session.sidebar_bufnr]
+  if not data then
+    return nil
+  end
+  return data[vim.api.nvim_win_get_cursor(0)[1]]
+end
+
+---Find a visible window in the session tabpage displaying the file's buffer,
+---preferring the codediff modified-side window. Buffer identity is the
+---revision identity: each review revision owns its own buffer.
+---@param session StagedSession
+---@param file_state StagedFileState
+---@return integer|nil winid
+local function find_file_window(session, file_state)
+  local buf = file_state.bufnr
+  if not buf or not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_buf_is_loaded(buf) then
+    return nil
+  end
+  if not vim.api.nvim_tabpage_is_valid(session.tabpage) then
+    return nil
+  end
+
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(session.tabpage)) do
+    if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
+      local ok, win_config = pcall(vim.api.nvim_win_get_config, win)
+      if ok and win_config.relative == '' and not win_config.external then
+        return win
+      end
+    end
+  end
+  return nil
+end
+
+---Place the cursor on the comment target and open compact-mode folds covering
+---it so the commented line is actually visible.
+---@param session StagedSession
+---@param file_state StagedFileState
+---@param comment StagedComment
+---@param win integer
+local function reveal_in_window(session, file_state, comment, win)
+  local start_line = position.get_current_lines(session, file_state, comment)
+  pcall(vim.api.nvim_win_set_cursor, win, { start_line, 0 })
+
+  vim.api.nvim_win_call(win, function()
+    vim.cmd('normal! zv')
+  end)
+end
+
 ---Jump to comment under cursor
 ---@param session StagedSession
 function M.goto_comment(session)
-  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
-  local data = line_data[session.sidebar_bufnr]
-
-  if not data or not data[cursor_line] then
+  local entry = entry_at_cursor(session)
+  if not entry or not entry.comment_id or not entry.file_key then
     return
   end
 
-  local entry = data[cursor_line]
-  if not entry.comment_id or not entry.file_path then
-    return
-  end
-
-  -- Get the file state for this comment's file
-  local file_state = state.get_file_state(session, entry.file_path)
+  local file_state = state.get_file_state(session, entry.file_key)
   if not file_state then
     return
   end
@@ -392,20 +472,27 @@ function M.goto_comment(session)
   if not comment then
     return
   end
-  local line = position.get_current_lines(session, file_state, comment)
 
   if not vim.api.nvim_tabpage_is_valid(session.tabpage) then
     return
   end
 
-  local wins = vim.api.nvim_tabpage_list_wins(session.tabpage)
-  for _, win in ipairs(wins) do
-    local buf = vim.api.nvim_win_get_buf(win)
-    if buf == file_state.bufnr then
-      vim.api.nvim_set_current_win(win)
-      vim.api.nvim_win_set_cursor(win, { line, 0 })
-      return
-    end
+  -- Real codediff session: always navigate through the adapter's cancellable
+  -- jump_to_comment (it owns modified-window focus, revision reopen, and fold
+  -- reveal via zv). Buffer-identity lookup below is only for standalone UIs.
+  local codediff = require('staged.integration.codediff')
+  if codediff.get_codediff_session(session.tabpage) then
+    codediff.jump_to_comment(session, file_state, comment)
+    return
+  end
+
+  -- Standalone fallback (no codediff): jump to the window showing this
+  -- revision's buffer.
+  local win = find_file_window(session, file_state)
+  if win then
+    vim.api.nvim_set_current_win(win)
+    reveal_in_window(session, file_state, comment, win)
+    return
   end
 
   vim.notify('Comment file is not open in this codediff', vim.log.levels.INFO)
@@ -414,19 +501,12 @@ end
 ---Edit comment under cursor
 ---@param session StagedSession
 function M.edit_comment(session)
-  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
-  local data = line_data[session.sidebar_bufnr]
-
-  if not data or not data[cursor_line] then
+  local entry = entry_at_cursor(session)
+  if not entry or not entry.comment_id or not entry.file_key then
     return
   end
 
-  local entry = data[cursor_line]
-  if not entry.comment_id or not entry.file_path then
-    return
-  end
-
-  local file_state = state.get_file_state(session, entry.file_path)
+  local file_state = state.get_file_state(session, entry.file_key)
   if not file_state then
     return
   end
@@ -452,15 +532,8 @@ end
 ---Delete comment under cursor
 ---@param session StagedSession
 function M.delete_comment(session)
-  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
-  local data = line_data[session.sidebar_bufnr]
-
-  if not data or not data[cursor_line] then
-    return
-  end
-
-  local entry = data[cursor_line]
-  if not entry.comment_id then
+  local entry = entry_at_cursor(session)
+  if not entry or not entry.comment_id then
     return
   end
 
@@ -470,7 +543,7 @@ function M.delete_comment(session)
     and session_is_active(session)
   then
     M.render(session)
-    if entry.file_path == session.current_file then
+    if entry.file_key == session.current_file then
       require('staged.ui.inline').render(session)
     end
   end

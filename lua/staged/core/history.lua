@@ -4,6 +4,19 @@ local position = require('staged.core.position')
 
 local max_entries = 100
 
+---Find the internal key of a file state within a session
+---@param session StagedSession
+---@param file_state StagedFileState
+---@return string|nil
+local function file_state_key(session, file_state)
+  for key, state in pairs(session.files) do
+    if state == file_state then
+      return key
+    end
+  end
+  return nil
+end
+
 ---@param session StagedSession
 ---@return StagedHistory
 local function get_history(session)
@@ -52,23 +65,32 @@ end
 function M.snapshot(session)
   local snapshot = { files = {} }
 
-  for file_path, file_state in pairs(session.files) do
+  for file_key, file_state in pairs(session.files) do
     local saved_file = {
       bufnr = file_state.bufnr,
+      file_path = file_state.file_path,
+      modified_revision = file_state.modified_revision,
+      original_revision = file_state.original_revision,
+      original_path = file_state.original_path,
+      git_root = file_state.git_root,
+      selection = vim.deepcopy(file_state.selection),
       comments = {},
     }
-    snapshot.files[file_path] = saved_file
+    snapshot.files[file_key] = saved_file
 
     for _, comment in pairs(file_state.comments) do
       local start_line, end_line = position.get_current_lines(session, file_state, comment)
       table.insert(saved_file.comments, {
         id = comment.id,
         file_path = comment.file_path,
+        modified_revision = comment.modified_revision,
+        original_revision = comment.original_revision,
         start_line = start_line,
         end_line = end_line,
         text = comment.text,
         created_at = comment.created_at,
         created_order = comment.created_order,
+        code = comment.code,
         history_extmark_id = nil,
       })
     end
@@ -132,21 +154,27 @@ local function restore_file(session, file_state, saved_comments)
     if comment then
       local start_line, end_line = position.get_current_lines(session, file_state, comment)
       comment.file_path = saved_comment.file_path
+      comment.modified_revision = saved_comment.modified_revision
+      comment.original_revision = saved_comment.original_revision
       comment.start_line = start_line
       comment.end_line = end_line
       comment.text = saved_comment.text
       comment.created_at = saved_comment.created_at
       comment.created_order = saved_comment.created_order
+      comment.code = saved_comment.code
     else
       local start_line, end_line = get_saved_lines(session, file_state, saved_comment)
       comment = {
         id = saved_comment.id,
         file_path = saved_comment.file_path,
+        modified_revision = saved_comment.modified_revision,
+        original_revision = saved_comment.original_revision,
         start_line = start_line,
         end_line = end_line,
         text = saved_comment.text,
         created_at = saved_comment.created_at,
         created_order = saved_comment.created_order,
+        code = saved_comment.code,
         extmark_id = nil,
       }
       comment.extmark_id = position.create_mark(session, file_state, comment)
@@ -158,19 +186,17 @@ end
 ---@param session StagedSession
 ---@param snapshot StagedSnapshot
 function M.restore(session, snapshot)
-  for file_path, file_state in pairs(session.files) do
-    local saved_file = snapshot.files[file_path]
+  for file_key, file_state in pairs(session.files) do
+    local saved_file = snapshot.files[file_key]
     restore_file(session, file_state, saved_file and saved_file.comments or {})
   end
 
-  for file_path, saved_file in pairs(snapshot.files) do
-    local file_state = session.files[file_path]
+  for file_key, saved_file in pairs(snapshot.files) do
+    local file_state = session.files[file_key]
     if not file_state then
-      file_state = {
-        bufnr = saved_file.bufnr,
-        comments = {},
-      }
-      session.files[file_path] = file_state
+      file_state = vim.deepcopy(saved_file)
+      file_state.comments = {}
+      session.files[file_key] = file_state
       restore_file(session, file_state, saved_file.comments)
     end
   end
@@ -232,10 +258,10 @@ function M.redo(session)
 end
 
 ---@param session StagedSession
----@param file_path string
+---@param file_key string Internal file-state key (see state.file_key)
 ---@param file_state StagedFileState
 ---@param new_bufnr integer
-function M.migrate_anchors(session, file_path, file_state, new_bufnr)
+function M.migrate_anchors(session, file_key, file_state, new_bufnr)
   local new_file_state = {
     bufnr = new_bufnr,
     comments = file_state.comments,
@@ -244,7 +270,7 @@ function M.migrate_anchors(session, file_path, file_state, new_bufnr)
 
   for _, entries in ipairs({ history.undo, history.redo }) do
     for _, entry in ipairs(entries) do
-      local saved_file = entry.snapshot.files[file_path]
+      local saved_file = entry.snapshot.files[file_key]
       if saved_file then
         saved_file.bufnr = new_bufnr
         for _, comment in ipairs(saved_file.comments) do
@@ -271,6 +297,37 @@ function M.migrate_anchors(session, file_path, file_state, new_bufnr)
               comment.end_line
             )
           end
+        end
+      end
+    end
+  end
+end
+
+---Fold dormant history anchors in a disappearing buffer into their saved line
+---numbers so a later undo restores against accurate positions.
+---@param session StagedSession
+---@param file_state StagedFileState
+---@param bufnr integer
+function M.capture_anchors(session, file_state, bufnr)
+  local key = file_state_key(session, file_state)
+  local history = get_history(session)
+  for _, entries in ipairs({ history.undo, history.redo }) do
+    for _, entry in ipairs(entries) do
+      local saved_file = entry.snapshot.files[key]
+      if saved_file then
+        for _, comment in ipairs(saved_file.comments) do
+          local live = file_state.comments[comment.id]
+          if live then
+            comment.start_line, comment.end_line = live.start_line, live.end_line
+          else
+            comment.start_line, comment.end_line = get_saved_lines(session, file_state, comment)
+          end
+          position.delete_range_mark(session.history_ns_id, file_state, comment.history_extmark_id)
+          comment.history_extmark_id = nil
+          comment.code = table.concat(
+            vim.api.nvim_buf_get_lines(bufnr, comment.start_line - 1, comment.end_line, false),
+            '\n'
+          )
         end
       end
     end

@@ -62,6 +62,7 @@ local function comment_event_data(comment, start_line, end_line)
   return {
     comment_id = comment.id,
     file_path = comment.file_path,
+    modified_revision = comment.modified_revision,
     comment = events.comment_data(comment, start_line, end_line),
   }
 end
@@ -136,7 +137,9 @@ function M.add(start_line, end_line, text, session)
   ---@type StagedComment
   local comment = {
     id = uuid(),
-    file_path = session.current_file,
+    file_path = file_state.file_path,
+    modified_revision = file_state.modified_revision,
+    original_revision = file_state.original_revision,
     start_line = start_line,
     end_line = end_line,
     text = text,
@@ -262,7 +265,7 @@ function M.clear_current_file(session)
   history.record(session, before, 'clear_current_file')
   emit_change('StagedCommentsCleared', session, 'clear_current_file', {
     count = count,
-    file_path = session.current_file,
+    file_path = file_state.file_path,
     scope = 'file',
   })
 end
@@ -353,9 +356,10 @@ function M.get_sorted(session)
   return list
 end
 
----Get all comments across all files, grouped by file path
+---Get all comments across all files, grouped by file-state key
+---(see state.file_key; use the file state's file_path/revision fields for display)
 ---@param session? StagedSession
----@return table<string, StagedComment[]> comments grouped by file path
+---@return table<string, StagedComment[]> comments grouped by internal file-state key
 function M.get_all_grouped(session)
   session = resolve_session(session)
   if not session then
@@ -364,7 +368,7 @@ function M.get_all_grouped(session)
 
   local result = {}
 
-  for file_path, file_state in pairs(session.files) do
+  for file_key, file_state in pairs(session.files) do
     local list = {}
     for _, comment in pairs(file_state.comments) do
       table.insert(list, comment)
@@ -372,7 +376,7 @@ function M.get_all_grouped(session)
 
     if #list > 0 then
       sort_comments(session, file_state, list)
-      result[file_path] = list
+      result[file_key] = list
     end
   end
 

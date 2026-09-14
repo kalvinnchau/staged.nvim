@@ -63,17 +63,22 @@ describe('json export', function()
 
     assert.equals(output, formatter.format(session, { format = 'json', include_code = true }))
     assert.equals(
-      '{"schema_version":1,"comments":['
-        .. '{"path":"alpha.lua","start_line":1,"end_line":2,'
-        .. '"text":"alpha comment","code":"alpha one\\nalpha two"},'
-        .. '{"path":"zeta.lua","start_line":2,"end_line":2,'
-        .. '"text":"zeta comment","code":"zeta two"}]}',
+      '{"comments":['
+        .. '{"code":"alpha one\\nalpha two","end_line":2,"modified_revision":"WORKING",'
+        .. '"path":"alpha.lua","side":"modified","start_line":1,"text":"alpha comment"},'
+        .. '{"code":"zeta two","end_line":2,"modified_revision":"WORKING",'
+        .. '"path":"zeta.lua","side":"modified","start_line":2,"text":"zeta comment"}],'
+        .. '"schema_version":2}',
       output
     )
 
     local decoded = vim.json.decode(output)
-    assert.equals(1, decoded.schema_version)
+    assert.equals(2, decoded.schema_version)
     assert.equals(2, #decoded.comments)
+    for _, record in ipairs(decoded.comments) do
+      assert.equals('WORKING', record.modified_revision)
+      assert.equals('modified', record.side)
+    end
   end)
 
   it('omits code when disabled and honors an explicit override', function()
@@ -134,12 +139,15 @@ describe('json export', function()
     local record = vim.json.decode(output).comments[1]
 
     assert.same({
-      start_line = 1,
       end_line = 1,
+      modified_revision = 'WORKING',
+      side = 'modified',
+      start_line = 1,
       text = 'outside comment',
     }, record)
     assert.is_nil(output:find(outside_path, 1, true))
     assert.is_nil(output:find('extmark', 1, true))
+    assert.is_nil(output:find('code', 1, true))
   end)
 
   it('uses the json filetype for buffer exports', function()
@@ -149,5 +157,26 @@ describe('json export', function()
 
     assert.equals('json', vim.bo.filetype)
     assert.same({ content }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
+  end)
+  it('encodes an empty comment list as a JSON array', function()
+    assert.equals(
+      '{"comments":[],"schema_version":2}',
+      formatter.format(session, { format = 'json' })
+    )
+  end)
+
+  it('exports separate ordered records for two revisions of the same path', function()
+    local path = session.current_file
+    comments.add(1, 1, 'working', session)
+    local buf = helpers.create_test_buffer({ 'index' })
+    table.insert(buffers, buf)
+    state.set_current_file(session, path, buf, { modified_revision = ':0' })
+    comments.add(1, 1, 'index', session)
+    local records = vim.json.decode(formatter.format(session, { format = 'json' })).comments
+    assert.equals(2, #records)
+    assert.equals(records[1].path, records[2].path)
+    assert.same({ 'WORKING', ':0' }, { records[1].modified_revision, records[2].modified_revision })
+    assert.same({ 'working', 'index' }, { records[1].text, records[2].text })
+    assert.same({ 'zeta one', 'index' }, { records[1].code, records[2].code })
   end)
 end)
